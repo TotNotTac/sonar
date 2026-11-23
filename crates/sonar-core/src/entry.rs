@@ -36,8 +36,14 @@ pub struct Entry {
     pub modified: Option<i64>,
     /// Human readable type, e.g. "Folder" or "PNG image".
     pub type_label: String,
-    /// Icon hint for the UI, e.g. "folder", "image", "text".
+    /// Built-in icon category for the UI, e.g. "folder", "image", "text".
     pub icon: &'static str,
+    /// MIME type (Linux) or UTI (macOS), when the OS knows it.
+    pub type_id: Option<String>,
+    /// Key to fetch the OS icon through the app's icon protocol.
+    pub icon_key: Option<String>,
+    /// Whether a thumbnail can be generated for this file.
+    pub thumbnail: bool,
 }
 
 impl Entry {
@@ -69,7 +75,8 @@ impl Entry {
         let modified =
             meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64);
 
-        let ft = filetype::describe(&name, kind);
+        let ft = filetype::describe_native(&name, &path, kind);
+        let thumbnail = kind == EntryKind::File && crate::thumbnail::supported(&name);
 
         Some(Entry {
             name,
@@ -83,6 +90,9 @@ impl Entry {
             modified,
             type_label: ft.label,
             icon: ft.icon,
+            type_id: ft.type_id,
+            icon_key: ft.icon_key,
+            thumbnail,
         })
     }
 

@@ -4,6 +4,8 @@ use std::fs::Metadata;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use super::{Icon, NativeType};
+use crate::entry::EntryKind;
 use crate::error::{CoreError, Result};
 use crate::places::{Place, PlaceSection};
 
@@ -52,6 +54,26 @@ pub fn restore(receipt: &TrashReceipt) -> Result<()> {
 
 pub fn trash_dir() -> Option<PathBuf> {
     None
+}
+
+pub fn native_type(_name: &str, _path: &Path, _kind: EntryKind) -> NativeType {
+    NativeType::default()
+}
+
+pub fn icon(_key: &str, _size: u32) -> Option<Icon> {
+    None
+}
+
+pub fn unmounted_volumes() -> Vec<Place> {
+    Vec::new()
+}
+
+pub fn mount_device(device: &str) -> Result<PathBuf> {
+    Err(CoreError::Other(format!("Mounting {device} is not supported on this platform")))
+}
+
+pub fn eject_volume(path: &Path) -> Result<()> {
+    Err(CoreError::Other(format!("Ejecting {} is not supported on this platform", path.display())))
 }
 
 pub fn mounted_volumes() -> Vec<Place> {

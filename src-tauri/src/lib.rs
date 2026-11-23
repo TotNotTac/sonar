@@ -1,15 +1,28 @@
 mod commands;
+mod menu;
 mod native;
 mod ops;
+mod protocol;
 
 pub fn run() {
     tauri::Builder::default()
         .manage(commands::ViewState::default())
         .manage(ops::OpsState::default())
+        .register_asynchronous_uri_scheme_protocol(protocol::SCHEME, protocol::handle)
+        .setup(|app| {
+            commands::watch_places(app.handle().clone());
+            #[cfg(target_os = "macos")]
+            menu::install(app.handle());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::get_places,
             commands::open_dir,
             commands::close_pane,
+            commands::mount_device,
+            menu::has_native_menu,
+            menu::set_menu_state,
+            commands::eject_volume,
             commands::open_path,
             commands::resolve_path,
             commands::home_dir,

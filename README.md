@@ -3,7 +3,8 @@
 A file manager inspired by KDE Dolphin, built with Tauri 2 and Rust. Targets macOS and Arch Linux.
 
 **Status:** browsing, live updates, opening files, and file operations (rename, new folder, trash, delete, copy/cut/paste with progress and conflict handling, undo), drag and drop (within Sonar and with other apps),
-the system clipboard, tabs, split view and rubber-band selection.
+the system clipboard, tabs, split view and rubber-band selection, OS file types and icons, image thumbnails,
+disk usage and mount/eject in the sidebar, and a native menu bar on macOS.
 
 ## Layout
 
@@ -16,6 +17,8 @@ crates/sonar-core/      UI-agnostic filesystem model (no Tauri dependency)
   src/places.rs         sidebar: standard user dirs from the `dirs` crate, trash, volumes
   src/paths.rs          resolve typed locations (~, relative, file://)
   src/clipboard.rs      file-list formats: file:// URIs, uri-list, GNOME/KDE cut markers
+  src/thumbnail.rs      image thumbnails, cached per the freedesktop thumbnail spec
+  src/volumes.rs        parsing lsblk / udisksctl output (removable media on Linux)
   src/filetype.rs       extension-based type labels and icon hints
   src/watch.rs          debounced folder watcher (FSEvents / inotify via `notify`)
   src/ops/              file operations
@@ -24,12 +27,16 @@ crates/sonar-core/      UI-agnostic filesystem model (no Tauri dependency)
     undo.rs             reversible record of each operation
     names.rs            name validation, "name (1).ext" generation
   src/platform/         OS-specific behaviour behind one API
-    macos.rs            UF_HIDDEN flag, /Volumes, `open`, NSFileManager trash, renamex_np, APFS clonefile
-    linux.rs            `.hidden` files, /proc/self/mounts, `xdg-open`, FreeDesktop trash (`trash` crate), renameat2
+    macos.rs            UF_HIDDEN flag, /Volumes, `open`, NSFileManager trash, renamex_np, APFS clonefile,
+                        UTType names, NSWorkspace icons, `diskutil` eject
+    linux.rs            `.hidden` files, /proc/self/mounts, `xdg-open`, FreeDesktop trash (`trash` crate), renameat2,
+                        shared-mime-info types, icon themes (KDE/GTK setting), udisks mount/eject
     generic.rs          fallback so the crate still builds on other platforms
 src-tauri/              Tauri shell: thin #[tauri::command] wrappers over sonar-core, plus per-view
                         state (current watcher, background item-count job)
   src/native/           UI-thread platform code: system clipboard (NSPasteboard / GTK), drag-out
+  src/protocol.rs       sonar:// scheme serving OS icons and thumbnails to the webview
+  src/menu.rs           native macOS menu bar (Linux gets Dolphin's ☰ menu in the toolbar)
 ui/                     static frontend, native ES modules (no bundler)
   js/app.js             window: tabs, split view, toolbar, location bar, sidebar, keyboard routing
   js/pane.js            one folder view: navigation, history, selection, filter, live updates
@@ -45,6 +52,7 @@ ui/                     static frontend, native ES modules (no bundler)
 - Rust (stable) and Node.js
 - **macOS:** Xcode Command Line Tools
 - **Arch Linux:** `sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl appmenu-gtk-module libappindicator-gtk3 librsvg`
+  (runtime: `shared-mime-info`, an icon theme such as `breeze-icons`, and `udisks2` for mounting; all standard on KDE/GNOME)
 
 ## Running
 
@@ -115,6 +123,9 @@ panel; name clashes ask Skip / Keep Both / Replace (or Merge for folders), optio
 | New tab / Close tab | Ctrl+T / Ctrl+W | ⌘T / ⌘W |
 | Reopen closed tab | Ctrl+Shift+T | ⌘⇧T |
 | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab | ⌃Tab, ⌘⇧] / ⌘⇧[ |
+
+On macOS the menu bar's Go menu also has Finder's shortcuts (⌘⇧H Home, ⌘⇧D Desktop, ⌘⇧O Documents,
+⌘⌥L Downloads); on Linux the same actions are in the toolbar's ☰ menu.
 
 Tabs (and their split views) are restored on the next launch. Drag tabs to reorder them, double-click empty
 tab-bar space for a new tab, and middle-click a tab to close it. Closing the last tab closes the window.

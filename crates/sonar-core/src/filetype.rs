@@ -7,7 +7,24 @@ use crate::entry::EntryKind;
 
 pub struct FileType {
     pub label: String,
+    /// Built-in icon category, used when the OS icon is unavailable.
     pub icon: &'static str,
+    /// MIME type (Linux) or UTI (macOS), if the OS knows it.
+    pub type_id: Option<String>,
+    /// Key for `platform::icon`, if the OS can provide an icon.
+    pub icon_key: Option<String>,
+}
+
+/// The OS's description and icon where available, the built-in table otherwise.
+pub fn describe_native(name: &str, path: &std::path::Path, kind: EntryKind) -> FileType {
+    let mut ft = describe(name, kind);
+    let native = crate::platform::native_type(name, path, kind);
+    if let Some(label) = native.label {
+        ft.label = label;
+    }
+    ft.type_id = native.type_id;
+    ft.icon_key = native.icon_key;
+    ft
 }
 
 const TABLE: &[(&[&str], &str, &str)] = &[
@@ -41,15 +58,17 @@ pub fn describe(name: &str, kind: EntryKind) -> FileType {
         EntryKind::Directory => {
             // macOS bundles are directories but users think of them as files.
             if extension(name).as_deref() == Some("app") {
-                return FileType { label: "Application".into(), icon: "app" };
+                return FileType { label: "Application".into(), icon: "app", type_id: None, icon_key: None };
             }
-            FileType { label: "Folder".into(), icon: "folder" }
+            FileType { label: "Folder".into(), icon: "folder", type_id: None, icon_key: None }
         }
-        EntryKind::BrokenSymlink => FileType { label: "Broken link".into(), icon: "broken" },
-        EntryKind::Other => FileType { label: "Special file".into(), icon: "file" },
+        EntryKind::BrokenSymlink => {
+            FileType { label: "Broken link".into(), icon: "broken", type_id: None, icon_key: None }
+        }
+        EntryKind::Other => FileType { label: "Special file".into(), icon: "file", type_id: None, icon_key: None },
         EntryKind::File => {
             let Some(ext) = extension(name) else {
-                return FileType { label: "File".into(), icon: "file" };
+                return FileType { label: "File".into(), icon: "file", type_id: None, icon_key: None };
             };
             for (exts, kind_label, icon) in TABLE {
                 if exts.contains(&ext.as_str()) {
@@ -58,10 +77,10 @@ pub fn describe(name: &str, kind: EntryKind) -> FileType {
                     } else {
                         format!("{} {}", ext.to_uppercase(), kind_label)
                     };
-                    return FileType { label, icon };
+                    return FileType { label, icon, type_id: None, icon_key: None };
                 }
             }
-            FileType { label: format!("{} file", ext.to_uppercase()), icon: "file" }
+            FileType { label: format!("{} file", ext.to_uppercase()), icon: "file", type_id: None, icon_key: None }
         }
     }
 }

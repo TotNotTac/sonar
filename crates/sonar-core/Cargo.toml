@@ -10,16 +10,25 @@ serde.workspace = true
 thiserror.workspace = true
 dirs.workspace = true
 notify-debouncer-mini = "0.8"
+serde_json.workspace = true
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+png = "0.18"
+md-5 = "0.11"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSError", "NSFileManager", "NSString", "NSURL"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSError", "NSFileManager", "NSString", "NSURL", "NSArray", "NSData", "NSDictionary", "NSGeometry"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSGraphicsContext", "objc2-core-foundation", "objc2-core-graphics", "objc2-uniform-type-identifiers"] }
+objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTType", "UTCoreTypes"] }
+plist = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 trash = "5"
+xdg-mime = "0.4"
+freedesktop-icons = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

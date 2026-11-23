@@ -50,7 +50,8 @@ jobs:
         run: |
           # pacman's download sandbox can't always set up seccomp inside containers.
           sed -i 's/^\[options\]/[options]\nDisableSandbox/' /etc/pacman.conf
-          pacman -Syu --noconfirm --needed rust gcc git
+          # shared-mime-info + an icon theme let the type/icon tests use real system data.
+          pacman -Syu --noconfirm --needed rust gcc git shared-mime-info adwaita-icon-theme util-linux
       - uses: actions/checkout@v4
       - run: cargo test -p sonar-core
       - run: cargo test -p sonar-core -- --ignored

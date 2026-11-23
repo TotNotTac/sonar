@@ -343,7 +343,8 @@ td.name { color: var(--text); }
 
 .name-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .name-label { overflow: hidden; text-overflow: ellipsis; }
-.name-cell .ficon { position: relative; display: inline-flex; flex: none; }
+/* The icon box positions its layers (built-in SVG, OS icon or thumbnail, link badge). */
+.ficon { position: relative; display: inline-flex; flex: none; }
 .ficon svg { width: 18px; height: 18px; }
 .ficon .link-badge {
   position: absolute;
@@ -630,3 +631,48 @@ body.dragging-items, body.dragging-items * { cursor: grabbing !important; }
 .drop-target { outline: 2px solid var(--accent) !important; outline-offset: -2px; background: var(--hover) !important; }
 .scroller.drop-target { outline-offset: -3px; }
 .tab.drop-target, .place.drop-target, .crumb.drop-target { border-radius: 4px; }
+
+/* ---------- OS icons and thumbnails ---------- */
+
+.ficon img.os-icon { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.ficon { width: 18px; height: 18px; }
+.ficon.big { width: 48px; height: 48px; }
+.ficon.has-os-icon > svg { visibility: hidden; }
+.ficon img.thumb { border-radius: 3px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12); background: var(--view); }
+.ficon .link-badge { z-index: 1; }
+
+/* ---------- Sidebar devices ---------- */
+
+.place { cursor: default; }
+.place-text { display: flex; flex: 1; flex-direction: column; justify-content: center; gap: 3px; min-width: 0; }
+.place-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.place .usage { height: 3px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.place .usage > div { height: 100%; background: var(--accent); opacity: 0.75; }
+.place .usage.full > div { background: var(--error-border); opacity: 1; }
+.place.active .usage { background: rgba(255, 255, 255, 0.35); }
+.place.active .usage > div { background: var(--selection-text); }
+.place.unmounted { color: var(--text-dim); }
+.place.unmounted svg { opacity: 0.55; }
+.place-eject {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  opacity: 0.6;
+}
+.place-eject:hover { opacity: 1; background: var(--button-hover); }
+.place-eject svg { width: 14px; height: 14px; color: inherit !important; }
+
+/* ---------- Platform chrome ---------- */
+
+/* macOS: the toolbar lives in the (transparent) title bar, beside the
+   traffic lights, and the window is dragged by its empty space. */
+body.platform-macos .toolbar { padding-left: 84px; min-height: 48px; }
+/* The ☰ menu is for platforms without a native menu bar. */
+body.native-menu #btn-menu { display: none; }

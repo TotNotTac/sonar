@@ -22,6 +22,13 @@ export function shortcut(spec) {
   return [...parts.map((p) => names[p]), key].join("+");
 }
 
+/** URL for the app's `sonar:` scheme (OS icons, thumbnails). */
+// Windows webviews expose custom schemes as http://<scheme>.localhost instead.
+const ASSET_BASE = /^Win/.test(navigator.platform) ? "http://sonar.localhost" : "sonar://localhost";
+export function assetUrl(kind, params) {
+  return `${ASSET_BASE}/${kind}?${new URLSearchParams(params).toString().replace(/\+/g, "%20")}`;
+}
+
 export const basename = (p) => p.replace(/\/+$/, "").split("/").pop() || p;
 export const parentOf = (p) => p.replace(/\/[^/]*\/?$/, "") || "/";
 

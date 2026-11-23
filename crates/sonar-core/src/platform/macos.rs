@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ffi::{CStr, CString, OsStr};
 use std::fs::{self, Metadata};
 use std::io;
@@ -5,11 +6,17 @@ use std::os::macos::fs::MetadataExt;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
+use std::sync::{Mutex, OnceLock};
 
 use objc2::rc::{autoreleasepool, Retained};
-use objc2_foundation::{NSFileManager, NSURL};
+use objc2::runtime::AnyObject;
+use objc2::AnyThread;
+use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSBitmapImageRepPropertyKey, NSWorkspace};
+use objc2_foundation::{NSDictionary, NSFileManager, NSPoint, NSRect, NSSize, NSString, NSURL};
+use objc2_uniform_type_identifiers::UTType;
 
-use super::cstring;
+use super::{cstring, Icon, NativeType};
+use crate::entry::EntryKind;
 use crate::error::{CoreError, Result};
 use crate::places::{Place, PlaceSection};
 
@@ -148,11 +155,12 @@ pub fn mounted_volumes() -> Vec<Place> {
             if !path.is_dir() {
                 continue;
             }
-            let (section, icon) = match is_local(&path) {
-                Some(false) => (PlaceSection::Remote, "network"),
-                _ => (PlaceSection::Devices, "drive"),
+            let (section, icon, ejectable) = match is_local(&path) {
+                // Finder offers "eject" (unmount) for servers, too.
+                Some(false) => (PlaceSection::Remote, "network", true),
+                _ => (PlaceSection::Devices, "drive", is_ejectable(&path)),
             };
-            others.push(Place::new(name, path, icon, section));
+            others.push(Place::new(name, path, icon, section).ejectable(ejectable));
         }
     }
     others.sort_by(|a, b| crate::sort::natural_cmp(&a.label, &b.label));
@@ -160,6 +168,139 @@ pub fn mounted_volumes() -> Vec<Place> {
     let mut out = vec![root];
     out.extend(others);
     out
+}
+
+/// External disks, USB sticks and disk images can be ejected; secondary
+/// internal partitions cannot. Asks `diskutil` once per mounted volume.
+fn is_ejectable(path: &Path) -> bool {
+    static CACHE: OnceLock<Mutex<HashMap<(PathBuf, u64), bool>>> = OnceLock::new();
+    let dev = fs::metadata(path).map(|m| m.st_dev()).unwrap_or(0);
+    let key = (path.to_path_buf(), dev);
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(&v) = cache.lock().unwrap_or_else(|p| p.into_inner()).get(&key) {
+        return v;
+    }
+    let v = super::run_tool("diskutil", &["info", "-plist", &path.to_string_lossy()])
+        .ok()
+        .and_then(|xml| plist::from_bytes::<plist::Dictionary>(xml.as_bytes()).ok())
+        .is_some_and(|d| diskutil_says_ejectable(&d));
+    cache.lock().unwrap_or_else(|p| p.into_inner()).insert(key, v);
+    v
+}
+
+fn diskutil_says_ejectable(info: &plist::Dictionary) -> bool {
+    let flag = |k: &str| info.get(k).and_then(plist::Value::as_boolean).unwrap_or(false);
+    flag("Ejectable")
+        || flag("Removable")
+        || flag("RemovableMedia")
+        || !info.get("Internal").and_then(plist::Value::as_boolean).unwrap_or(true)
+}
+
+/// macOS mounts attached volumes automatically, so there is nothing to list.
+pub fn unmounted_volumes() -> Vec<Place> {
+    Vec::new()
+}
+
+pub fn mount_device(device: &str) -> Result<PathBuf> {
+    Err(CoreError::Other(format!("Mounting {device} manually is not supported on macOS")))
+}
+
+/// Eject (or, for servers and non-ejectable volumes, unmount) the volume at `path`.
+pub fn eject_volume(path: &Path) -> Result<()> {
+    let p = path.to_string_lossy();
+    super::run_tool("diskutil", &["eject", &p])
+        .or_else(|_| super::run_tool("diskutil", &["unmount", &p]))
+        .map(drop)
+        .map_err(|e| CoreError::Other(format!("Could not eject \"{}\": {e}", path.display())))
+}
+
+// ---------- File types and icons ----------
+
+/// Type description and identifier from UTType, cached per extension.
+pub fn native_type(name: &str, path: &Path, kind: EntryKind) -> NativeType {
+    let ext = name
+        .rsplit_once('.')
+        .map(|(stem, e)| (stem, e.to_ascii_lowercase()))
+        .filter(|(s, e)| !s.is_empty() && !e.is_empty())
+        .map(|(_, e)| e);
+    match kind {
+        EntryKind::Directory if ext.as_deref() == Some("app") => NativeType {
+            label: None,
+            type_id: Some("com.apple.application-bundle".into()),
+            icon_key: Some(format!("path:{}", path.display())),
+        },
+        EntryKind::Directory => NativeType {
+            label: None,
+            type_id: Some("public.folder".into()),
+            // Desktop, Documents, ... have their own Finder icons.
+            icon_key: Some(if super::special_folder(path).is_some() {
+                format!("path:{}", path.display())
+            } else {
+                "uti:public.folder".into()
+            }),
+        },
+        EntryKind::File => {
+            let Some(ext) = ext else {
+                return NativeType {
+                    label: None,
+                    type_id: Some("public.data".into()),
+                    icon_key: Some("uti:public.data".into()),
+                };
+            };
+            let (label, id) = uttype_for_extension(&ext);
+            NativeType { label, icon_key: Some(format!("uti:{id}")), type_id: Some(id) }
+        }
+        EntryKind::BrokenSymlink | EntryKind::Other => NativeType::default(),
+    }
+}
+
+/// (description, identifier)
+type UtiInfo = (Option<String>, String);
+
+fn uttype_for_extension(ext: &str) -> UtiInfo {
+    static CACHE: OnceLock<Mutex<HashMap<String, UtiInfo>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(hit) = cache.lock().unwrap_or_else(|p| p.into_inner()).get(ext) {
+        return hit.clone();
+    }
+    let found = autoreleasepool(|_| {
+        UTType::typeWithFilenameExtension(&NSString::from_str(ext)).map(|t| {
+            let id = t.identifier().to_string();
+            // Dynamic types ("dyn.ah62...") have no useful description.
+            let label = (!id.starts_with("dyn.")).then(|| t.localizedDescription().map(|d| d.to_string())).flatten();
+            (label, id)
+        })
+    });
+    let value = found.unwrap_or((None, "public.data".into()));
+    cache.lock().unwrap_or_else(|p| p.into_inner()).insert(ext.to_string(), value.clone());
+    value
+}
+
+/// Render the icon for `key` (`uti:<identifier>` or `path:<file>`) as a PNG
+/// of `size` points. AppKit picks the pixel density of the main screen, so
+/// on a Retina display the PNG has twice as many pixels.
+pub fn icon(key: &str, size: u32) -> Option<Icon> {
+    let px = f64::from(size.clamp(8, 512));
+    autoreleasepool(|_| {
+        let ws = NSWorkspace::sharedWorkspace();
+        let image = match key.split_once(':') {
+            Some(("uti", id)) => {
+                let content_type: Retained<UTType> = UTType::typeWithIdentifier(&NSString::from_str(id))?;
+                ws.iconForContentType(&content_type)
+            }
+            Some(("path", p)) => ws.iconForFile(&NSString::from_str(p)),
+            _ => return None,
+        };
+        image.setSize(NSSize::new(px, px));
+        let mut rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(px, px));
+        // SAFETY: `rect` is a valid, writable NSRect for the duration of the call.
+        let cg = unsafe { image.CGImageForProposedRect_context_hints(&mut rect, None, None) }?;
+        let rep = NSBitmapImageRep::initWithCGImage(NSBitmapImageRep::alloc(), &cg);
+        let props = NSDictionary::<NSBitmapImageRepPropertyKey, AnyObject>::new();
+        // SAFETY: an empty properties dictionary is valid for PNG encoding.
+        let data = unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &props) }?;
+        Some(Icon { bytes: data.to_vec(), content_type: "image/png" })
+    })
 }
 
 /// `Some(true)` for local filesystems, `Some(false)` for network mounts.
@@ -171,4 +312,43 @@ fn is_local(path: &Path) -> Option<bool> {
         return None;
     }
     Some(st.f_flags & libc::MNT_LOCAL as u32 != 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn types_from_uttype() {
+        let t = native_type("photo.PNG", Path::new("/tmp/photo.PNG"), EntryKind::File);
+        assert_eq!(t.type_id.as_deref(), Some("public.png"));
+        assert_eq!(t.icon_key.as_deref(), Some("uti:public.png"));
+        assert!(t.label.is_some_and(|l| l.to_lowercase().contains("png")));
+        let unknown = native_type("x.zzqqunknown", Path::new("/tmp/x.zzqqunknown"), EntryKind::File);
+        assert_eq!(unknown.label, None, "dynamic types fall back to Sonar's own labels");
+        let app = native_type("Safari.app", Path::new("/Applications/Safari.app"), EntryKind::Directory);
+        assert_eq!(app.icon_key.as_deref(), Some("path:/Applications/Safari.app"));
+    }
+
+    #[test]
+    fn icons_render_as_png() {
+        for key in ["uti:public.png", "uti:public.folder", "path:/Applications"] {
+            let icon = icon(key, 32).unwrap_or_else(|| panic!("no icon for {key}"));
+            assert_eq!(&icon.bytes[..8], b"\x89PNG\r\n\x1a\n", "{key}");
+            let img = image::load_from_memory(&icon.bytes).unwrap();
+            assert!([32, 64].contains(&img.width()) && img.width() == img.height(), "{key}: {}px", img.width());
+        }
+        assert!(icon("uti:", 32).is_none() || icon("bogus", 32).is_none());
+    }
+
+    #[test]
+    fn ejectable_from_diskutil_plist() {
+        let parse = |xml: &str| diskutil_says_ejectable(&plist::from_bytes(xml.as_bytes()).unwrap());
+        let doc = |body: &str| {
+            format!(r#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>{body}</dict></plist>"#)
+        };
+        assert!(parse(&doc("<key>Ejectable</key><true/><key>Internal</key><false/>")));
+        assert!(parse(&doc("<key>Ejectable</key><false/><key>Internal</key><false/>")), "external disk");
+        assert!(!parse(&doc("<key>Ejectable</key><false/><key>Removable</key><false/><key>Internal</key><true/>")));
+    }
 }

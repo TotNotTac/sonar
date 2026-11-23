@@ -15,6 +15,8 @@ pub mod paths;
 pub mod places;
 pub mod platform;
 pub mod sort;
+pub mod thumbnail;
+pub mod volumes;
 pub mod watch;
 
 pub use breadcrumb::{breadcrumbs, Crumb};

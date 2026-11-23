@@ -90,6 +90,47 @@ export function backgroundMenu(app, pane, { undoLabel = null, canPaste = false }
   ];
 }
 
+/** The ☰ application menu (Linux; macOS uses the native menu bar). */
+export function appMenu(app) {
+  const pane = app.pane;
+  const run = (id) => () => app.runAction(id);
+  const split = app.activeTab.panes.length === 2;
+  return [
+    { label: "New Tab", shortcut: keys.newTab, action: run("new-tab") },
+    { label: "New Folder…", shortcut: keys.newFolder, action: run("new-folder") },
+    { label: "Reopen Closed Tab", shortcut: keys.reopenTab, disabled: !app.closedTabs.length, action: run("reopen-tab") },
+    "-",
+    {
+      label: "View Mode",
+      submenu: [
+        { label: "Icons", shortcut: keys.icons, checked: pane.props.viewMode === "icons", action: run("view-icons") },
+        { label: "Details", shortcut: keys.details, checked: pane.props.viewMode === "details", action: run("view-details") },
+      ],
+    },
+    { label: "Show Hidden Files", shortcut: keys.hidden, checked: app.showHidden, action: run("show-hidden") },
+    { label: "Split View", shortcut: "F3", checked: split, action: run("split") },
+    { label: "Filter…", shortcut: keys.filter, action: run("filter") },
+    "-",
+    {
+      label: "Go",
+      submenu: [
+        { label: "Back", disabled: !pane.canGoBack(), action: run("back") },
+        { label: "Forward", disabled: !pane.canGoForward(), action: run("forward") },
+        { label: "Up", disabled: !pane.view?.parent, action: run("up") },
+        "-",
+        { label: "Home", action: run("go-home") },
+        { label: "Desktop", action: run("go-desktop") },
+        { label: "Documents", action: run("go-documents") },
+        { label: "Downloads", action: run("go-downloads") },
+        { label: "Trash", action: run("go-trash") },
+      ],
+    },
+    { label: "Copy Location", shortcut: keys.copyLocation, action: run("copy-location") },
+    "-",
+    { label: "Close Window", action: run("close-window") },
+  ];
+}
+
 /** For places in the sidebar and breadcrumb segments. */
 export function locationMenu(app, path) {
   return [

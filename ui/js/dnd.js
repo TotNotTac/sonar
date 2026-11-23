@@ -122,7 +122,7 @@ export class DragDrop {
     let target = null;
     let tab = null;
     const tabEl = node.closest(".tab");
-    const place = node.closest(".place");
+    const place = node.closest(".place:not(.unmounted)");
     const crumb = node.closest(".crumb");
     const paneEl = node.closest(".pane");
     if (tabEl) {

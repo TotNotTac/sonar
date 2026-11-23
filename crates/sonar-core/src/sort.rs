@@ -111,6 +111,9 @@ mod tests {
             modified: Some(size as i64),
             type_label: String::new(),
             icon,
+            type_id: None,
+            icon_key: None,
+            thumbnail: false,
         }
     }
 

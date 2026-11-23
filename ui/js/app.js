@@ -1,13 +1,14 @@
 // Window-level controller: tabs, split view, toolbar, location bar, places
 // sidebar, status bar, keyboard routing and context menus.
 
-import { backgroundMenu, itemsMenu, locationMenu, shortcuts, tabMenu } from "./contextmenus.js";
+import { appMenu, backgroundMenu, itemsMenu, locationMenu, shortcuts, tabMenu } from "./contextmenus.js";
 import { Icons } from "./icons.js";
 import { isMenuOpen, showMenu } from "./menu.js";
 import { DragDrop } from "./dnd.js";
 import { Ops } from "./ops.js";
 import { Pane } from "./pane.js";
 import { store } from "./store.js";
+import { Fmt } from "./format.js";
 import { basename, el, errMsg, invoke, isMac, isMod, listen, shortcut } from "./util.js";
 
 const $ = (id) => document.getElementById(id);
@@ -34,6 +35,12 @@ export class App {
     };
     this.ops = new Ops(this);
     this.dnd = new DragDrop(this);
+    this.actions = this.buildActions();
+    this.nativeMenu = false; // set in start(): macOS has a real menu bar
+    this.lastKeyHandled = -Infinity;
+    document.body.classList.add(isMac ? "platform-macos" : "platform-linux");
+    this.initAppMenu();
+    this.initClipboardEvents();
     // Another app may have changed the clipboard while we were in the background.
     window.addEventListener("focus", () => this.ops.syncClipboard());
     this.initToolbar();
@@ -52,7 +59,117 @@ export class App {
       console.error(err);
     }
     this.home = (await invoke("home_dir")) ?? "/";
+    this.nativeMenu = await invoke("has_native_menu").catch(() => false);
+    document.body.classList.toggle("native-menu", this.nativeMenu);
     if (!this.restoreSession()) this.newTab(this.home);
+  }
+
+  // ---------- Actions (shared by the menu bar, the ☰ menu and shortcuts) ----------
+
+  buildActions() {
+    const go = (icon) => () => {
+      const p = this.places.find((x) => x.icon === icon);
+      if (p) this.pane.navigate(p.path);
+    };
+    return {
+      "new-tab": () => this.newTab(this.pane?.path ?? this.home),
+      "new-folder": () => this.ops.newFolder(),
+      "open-location": () => this.editLocation(),
+      "close-tab": () => this.closeCurrent(),
+      "close-window": () => this.closeWindow(),
+      "reopen-tab": () => this.reopenClosedTab(),
+      "next-tab": () => this.cycleTab(1),
+      "prev-tab": () => this.cycleTab(-1),
+      undo: () => this.ops.undo(),
+      "paste-move": () => this.ops.paste(this.pane.path, { move: true }),
+      "select-all": () => this.pane.selectAll(),
+      "copy-location": () => this.ops.copyLocation(),
+      rename: () => this.ops.beginRename(),
+      trash: () => this.ops.removeSelected(),
+      delete: () => this.ops.removeSelected({ permanent: true }),
+      "view-icons": () => this.setViewMode("icons"),
+      "view-details": () => this.setViewMode("details"),
+      "show-hidden": () => this.toggleHidden(),
+      split: () => this.toggleSplit(),
+      filter: () => this.pane.showFilter(),
+      reload: () => this.pane.reload(),
+      back: () => this.pane.goBack(),
+      forward: () => this.pane.goForward(),
+      up: () => this.pane.goUp(),
+      "go-home": go("home"),
+      "go-desktop": go("desktop"),
+      "go-documents": go("documents"),
+      "go-downloads": go("downloads"),
+      "go-trash": go("trash"),
+    };
+  }
+
+  /**
+   * Run an action from a menu. While a text field has focus, Undo and Select
+   * All apply to the text and file actions are ignored, so e.g. ⌘⌫ in the
+   * rename field never trashes files.
+   */
+  runAction(id) {
+    const field = document.activeElement?.closest?.("input, textarea");
+    if (field) {
+      if (id === "undo") return document.execCommand("undo");
+      if (id === "select-all") return field.select();
+      const harmless = /^(new-tab|close-window|reopen-tab|next-tab|prev-tab|view-|show-hidden|split|reload|go-)/;
+      if (!harmless.test(id)) return;
+    }
+    if (!this.pane) return;
+    this.actions[id]?.();
+  }
+
+  initAppMenu() {
+    // Native menu bar (macOS). A shortcut handled by the page doesn't reach
+    // the menu, but guard against both firing for one key press anyway: the
+    // echo of a key press arrives within milliseconds; people can't click a
+    // menu that fast.
+    listen("menu", ({ payload }) => {
+      if (performance.now() - this.lastKeyHandled < 120) return;
+      this.runAction(payload);
+    });
+    // ☰ menu (Linux, where Dolphin also hides the menu bar by default).
+    const btn = document.getElementById("btn-menu");
+    btn.innerHTML = Icons.ui("menu");
+    btn.title = "Menu";
+    btn.addEventListener("click", () => {
+      const r = btn.getBoundingClientRect();
+      showMenu(r.right - 220, r.bottom + 4, appMenu(this));
+    });
+  }
+
+  /** Mirror state in the native menu's check marks (macOS). */
+  syncMenu() {
+    if (!this.nativeMenu || this.menuSyncQueued) return;
+    this.menuSyncQueued = true;
+    requestAnimationFrame(() => {
+      this.menuSyncQueued = false;
+      const p = this.pane;
+      if (!p) return;
+      invoke("set_menu_state", {
+        state: {
+          viewMode: p.props.viewMode, showHidden: this.showHidden, split: this.activeTab.panes.length === 2,
+          canGoBack: p.canGoBack(), canGoForward: p.canGoForward(), canGoUp: !!p.view?.parent,
+        },
+      }).catch(() => {});
+    });
+  }
+
+  /**
+   * Edit ▸ Cut/Copy/Paste in the macOS menu are the system's own items (so
+   * they work in text fields). With the file view focused they arrive as DOM
+   * clipboard events; "before*" handlers tell WebKit to enable the items.
+   */
+  initClipboardEvents() {
+    const inField = () => !!document.activeElement?.closest?.("input, textarea");
+    for (const type of ["beforecopy", "beforecut", "beforepaste"]) {
+      document.addEventListener(type, (ev) => { if (!inField() && this.pane) ev.preventDefault(); });
+    }
+    document.addEventListener("copy", (ev) => { if (!inField()) { ev.preventDefault(); this.ops.setClipboard("copy"); } });
+    document.addEventListener("cut", (ev) => { if (!inField()) { ev.preventDefault(); this.ops.setClipboard("cut"); } });
+    document.addEventListener("paste", (ev) => { if (!inField()) { ev.preventDefault(); this.ops.paste(); } });
   }
 
   // ---------- Panes and tabs ----------
@@ -346,6 +463,7 @@ export class App {
     this.renderCrumbs();
     for (const b of e.sidebar.querySelectorAll(".place")) b.classList.toggle("active", b.dataset.path === pane.path);
     this.updateStatus();
+    this.syncMenu();
     document.title = pane.path ? `${pane.title()} — Sonar` : "Sonar";
   }
 
@@ -502,40 +620,101 @@ export class App {
   // ---------- Places sidebar ----------
 
   async loadPlaces() {
-    this.places = await invoke("get_places");
+    this.renderPlaces(await invoke("get_places"));
+  }
+
+  /** Sidebar: places, network shares, and devices with usage bars and eject buttons. */
+  renderPlaces(places) {
+    this.places = places;
     const titles = { places: "Places", remote: "Remote", devices: "Devices" };
     const frag = document.createDocumentFragment();
     for (const section of ["places", "remote", "devices"]) {
-      const items = this.places.filter((p) => p.section === section);
+      const items = places.filter((p) => p.section === section);
       if (!items.length) continue;
       frag.append(Object.assign(el("div", "side-heading"), { textContent: titles[section] }));
       for (const p of items) {
-        const b = el("button", "place", Icons.ui(p.icon));
-        b.dataset.path = p.path;
-        b.title = p.path;
-        b.append(Object.assign(el("span"), { textContent: p.label }));
-        frag.append(b);
+        const row = el("div", `place${p.mounted ? "" : " unmounted"}`, Icons.ui(p.icon));
+        row.setAttribute("role", "button");
+        row.dataset.path = p.path;
+        const text = el("div", "place-text");
+        text.append(Object.assign(el("span", "place-label"), { textContent: p.label }));
+        if (p.usage?.total) {
+          const used = 1 - p.usage.free / p.usage.total;
+          const bar = el("div", `usage${used > 0.9 ? " full" : ""}`, `<div style="width:${(used * 100).toFixed(1)}%"></div>`);
+          text.append(bar);
+          row.title = `${p.label}: ${Fmt.bytes(p.usage.free)} free of ${Fmt.bytes(p.usage.total)}`;
+        } else {
+          row.title = p.mounted ? p.path : `${p.label} (${p.device}) — click to mount`;
+        }
+        row.append(text);
+        if (p.ejectable) {
+          const eject = el("button", "place-eject", Icons.ui("eject"));
+          eject.title = p.section === "remote" ? "Disconnect" : "Eject";
+          row.append(eject);
+        }
+        frag.append(row);
       }
     }
     this.els.sidebar.replaceChildren(frag);
+    for (const b of this.els.sidebar.querySelectorAll(".place")) b.classList.toggle("active", b.dataset.path === this.pane?.path);
+  }
+
+  placeAt(node) {
+    const row = node.closest(".place");
+    return row && this.places.find((p) => p.path === row.dataset.path);
+  }
+
+  /** Attached but unmounted drive: mount it, then open it. */
+  async mountPlace(place) {
+    this.flashStatus(`Mounting “${place.label}”…`);
+    try {
+      const path = await invoke("mount_device", { device: place.device });
+      await this.loadPlaces();
+      await this.pane.navigate(path);
+    } catch (err) {
+      this.pane.showMessage(errMsg(err));
+    }
+  }
+
+  async ejectPlace(place) {
+    // Leave the volume first so nothing in Sonar keeps it busy.
+    const inside = (p) => p.path === place.path || p.path?.startsWith(`${place.path}/`);
+    const moves = [];
+    this.forEachPane((p) => { if (inside(p)) moves.push(p.navigate(this.home)); });
+    await Promise.all(moves);
+    this.flashStatus(`Ejecting “${place.label}”…`);
+    try {
+      await invoke("eject_volume", { path: place.path });
+      this.flashStatus(place.section === "remote" ? `Disconnected “${place.label}”` : `“${place.label}” can be removed safely`);
+      await this.loadPlaces();
+    } catch (err) {
+      this.pane.showMessage(errMsg(err));
+    }
   }
 
   initSidebar() {
     const { sidebar, splitter } = this.els;
-    const placePath = (ev) => ev.target.closest(".place")?.dataset.path;
     sidebar.addEventListener("click", (ev) => {
-      const p = placePath(ev);
-      if (p) this.pane.navigate(p);
+      const place = this.placeAt(ev.target);
+      if (!place) return;
+      if (ev.target.closest(".place-eject")) this.ejectPlace(place);
+      else if (!place.mounted) this.mountPlace(place);
+      else this.pane.navigate(place.path);
     });
     sidebar.addEventListener("auxclick", (ev) => {
-      const p = placePath(ev);
-      if (p && ev.button === 1) this.newTab(p, { activate: false });
+      const place = this.placeAt(ev.target);
+      if (place?.mounted && ev.button === 1) this.newTab(place.path, { activate: false });
     });
     sidebar.addEventListener("contextmenu", (ev) => {
       ev.preventDefault();
-      const p = placePath(ev);
-      if (p) showMenu(ev.clientX, ev.clientY, locationMenu(this, p));
+      const place = this.placeAt(ev.target);
+      if (!place) return;
+      const items = place.mounted ? locationMenu(this, place.path) : [{ label: "Mount", action: () => this.mountPlace(place) }];
+      if (place.ejectable) items.push("-", { label: place.section === "remote" ? "Disconnect" : "Eject", action: () => this.ejectPlace(place) });
+      showMenu(ev.clientX, ev.clientY, items);
     });
+    // Drives attached, mounted or removed elsewhere (backend polls).
+    listen("places-changed", ({ payload }) => this.renderPlaces(payload));
 
     // Resizable sidebar.
     const root = document.documentElement;
@@ -567,9 +746,8 @@ export class App {
       // Text fields and dialogs handle their own keys.
       if (ev.target.closest?.("input, textarea") || document.querySelector("dialog[open]")) return;
       if (!this.pane) return;
-      if (this.globalKey(ev)) return;
-      if (this.ops.keydown(ev)) return;
-      this.pane.keydown(ev);
+      const handled = this.globalKey(ev) || this.ops.keydown(ev) || this.pane.keydown(ev);
+      if (handled) this.lastKeyHandled = performance.now();
     });
   }
 

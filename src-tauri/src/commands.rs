@@ -14,6 +14,8 @@ use tauri::{AppHandle, Emitter, State};
 pub const EVENT_DIR_CHANGED: &str = "dir-changed";
 /// Emitted in batches as folder item counts are computed after a listing.
 pub const EVENT_CHILD_COUNTS: &str = "child-counts";
+/// Emitted with the full list when drives are attached, mounted or removed.
+pub const EVENT_PLACES_CHANGED: &str = "places-changed";
 
 /// Per-pane backend state. A pane is one folder view; a tab holds one or two
 /// (split view). Pane ids are chosen by the frontend.
@@ -67,8 +69,57 @@ struct DirChanged {
 }
 
 #[tauri::command]
-pub fn get_places() -> Vec<Place> {
-    sonar_core::places()
+pub async fn get_places() -> Result<Vec<Place>, CoreError> {
+    blocking(sonar_core::places).await
+}
+
+/// Mount an attached device (Linux, via udisks). Returns where it was mounted.
+#[tauri::command]
+pub async fn mount_device(device: String) -> Result<PathBuf, CoreError> {
+    blocking(move || sonar_core::platform::mount_device(&device)).await?
+}
+
+/// Eject a removable volume (or unmount a network share).
+#[tauri::command]
+pub async fn eject_volume(path: PathBuf) -> Result<(), CoreError> {
+    blocking(move || sonar_core::platform::eject_volume(&path)).await?
+}
+
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, CoreError> {
+    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| CoreError::Other(format!("Background task failed: {e}")))
+}
+
+/// Poll the list of places and tell the UI when drives come or go. Free
+/// space changes constantly, so usage-only changes are sent at most every 30 s.
+pub fn watch_places(app: AppHandle) {
+    std::thread::Builder::new()
+        .name("sonar-places".into())
+        .spawn(move || {
+            let structure = |places: &[Place]| {
+                let bare: Vec<Place> = places
+                    .iter()
+                    .cloned()
+                    .map(|mut p| {
+                        p.usage = None;
+                        p
+                    })
+                    .collect();
+                serde_json::to_string(&bare).unwrap_or_default()
+            };
+            let mut last = structure(&sonar_core::places());
+            let mut last_full = Instant::now();
+            loop {
+                std::thread::sleep(Duration::from_secs(3));
+                let places = sonar_core::places();
+                let now = structure(&places);
+                if now != last || last_full.elapsed() >= Duration::from_secs(30) {
+                    let _ = app.emit(EVENT_PLACES_CHANGED, &places);
+                    last = now;
+                    last_full = Instant::now();
+                }
+            }
+        })
+        .expect("failed to spawn places watcher");
 }
 
 /// List a folder for a pane, watch it for changes, and count its

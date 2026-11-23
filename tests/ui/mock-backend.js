@@ -59,6 +59,9 @@
       name, path: p, kind: dir ? "directory" : "file", isSymlink: false, isHidden: name.startsWith("."),
       readonly: false, size: dir ? null : n.size, childCount: dir && countChildren ? children(p).length : null,
       modified: n.mtime, typeLabel, icon,
+      typeId: dir ? "inode/directory" : `mock/${ext || "unknown"}`,
+      iconKey: dir ? "folder" : `${icon}-x-generic,unknown`,
+      thumbnail: ext === "png",
     };
   }
 
@@ -110,6 +113,32 @@
       for (const [pane, path] of watching) if (path === dir) emit("dir-changed", { pane, path });
     }, 30);
   }
+
+  // ---------- Places and drives ----------
+
+  const volumes = [
+    { label: "USB", mountPoint: "/media/user/USB", device: "/dev/sdb1", mounted: true, removable: true, usage: { total: 16e9, free: 12e9 } },
+    { label: "Backup", mountPoint: "/media/user/Backup", device: "/dev/sdc1", mounted: false, removable: true, usage: null },
+  ];
+  mkdir("/media/user/USB");
+  write("/media/user/USB/slides.pdf", 3e6);
+
+  function places() {
+    const user = [["Home", HOME, "home"], ["Desktop", `${HOME}/Desktop`, "desktop"], ["Documents", `${HOME}/Documents`, "documents"],
+      ["Downloads", `${HOME}/Downloads`, "downloads"], ["Music", `${HOME}/Music`, "music"], ["Pictures", `${HOME}/Pictures`, "pictures"],
+      ["Videos", `${HOME}/Videos`, "videos"], ["Trash", TRASH, "trash"]];
+    const base = { usage: null, ejectable: false, mounted: true, device: null };
+    return [
+      ...user.map(([label, path, icon]) => ({ ...base, label, path, icon, section: "places" })),
+      { ...base, label: "Root", path: "/", icon: "root", section: "devices", usage: { total: 500e9, free: 40e9 } },
+      ...volumes.map((v) => ({
+        label: v.label, icon: "removable", section: "devices", mounted: v.mounted, ejectable: v.mounted,
+        path: v.mounted ? v.mountPoint : v.device, device: v.device, usage: v.mounted ? v.usage ?? { total: 1e12, free: 3e11 } : null,
+      })),
+    ];
+  }
+  // Like the backend's poller noticing a change.
+  const placesChanged = () => setTimeout(() => emit("places-changed", places()), 10);
 
   // ---------- Errors ----------
 
@@ -198,12 +227,24 @@
 
   const calls = [];
   const commands = {
-    get_places: () => [
-      ...[["Home", HOME, "home"], ["Desktop", `${HOME}/Desktop`, "desktop"], ["Documents", `${HOME}/Documents`, "documents"],
-        ["Downloads", `${HOME}/Downloads`, "downloads"], ["Music", `${HOME}/Music`, "music"], ["Pictures", `${HOME}/Pictures`, "pictures"],
-        ["Videos", `${HOME}/Videos`, "videos"], ["Trash", TRASH, "trash"]].map(([label, path, icon]) => ({ label, path, icon, section: "places" })),
-      { label: "Root", path: "/", icon: "root", section: "devices" },
-    ],
+    get_places: () => places(),
+    mount_device: ({ device }) => {
+      const v = volumes.find((d) => d.device === device);
+      if (!v) throw err("other", `Could not mount ${device}: no such device`);
+      v.mounted = true;
+      mkdir(v.mountPoint);
+      write(`${v.mountPoint}/backup-2026.tar`, 7e8);
+      placesChanged();
+      return v.mountPoint;
+    },
+    eject_volume: ({ path }) => {
+      const v = volumes.find((d) => d.mounted && d.mountPoint === path);
+      if (!v) throw err("other", `Could not eject "${path}": it is not mounted`);
+      if (window.__mock.busy.has(path)) throw err("other", `Could not eject "${path}": target is busy`);
+      descendants(path).forEach((p) => fs.delete(p));
+      volumes.splice(volumes.indexOf(v), 1);
+      placesChanged();
+    },
     home_dir: () => HOME,
     open_dir: ({ pane, path, options = {} }) => {
       const node = fs.get(path);
@@ -289,6 +330,8 @@
       if (window.__mock.clipboard?.mode === "cut") window.__mock.clipboard = null;
     },
     start_drag_out: ({ paths }) => { window.__mock.dragOuts.push(paths); },
+    has_native_menu: () => window.__mock.nativeMenu,
+    set_menu_state: ({ state }) => { window.__mock.menuState = state; },
     undo_label: () => undoStack.at(-1)?.label ?? null,
     undo: () => {
       const action = undoStack.pop();
@@ -303,6 +346,16 @@
     HOME, TRASH, fs, calls, emit, watching, undoStack, mkdir, write, touched,
     denied: new Set(),
     clipboard: null,
+    busy: new Set(),
+    nativeMenu: false,
+    menuState: null,
+    /** Simulate a click in the native menu bar. */
+    menu: (id) => emit("menu", id),
+    /** Simulate a USB stick being plugged in (the poller would report it). */
+    attach(label, device) {
+      volumes.push({ label, mountPoint: `/media/user/${label}`, device, mounted: false, removable: true, usage: null });
+      placesChanged();
+    },
     dragOuts: [],
     /** Simulate Tauri's native drag-drop events for files dragged in from another app. */
     dropFiles(paths, x, y, { leaveFirst = false } = {}) {

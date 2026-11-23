@@ -61,6 +61,14 @@ export class Pane {
     this.header.addEventListener("click", () => this.scroller.focus());
 
     this.scroller.addEventListener("mousedown", (ev) => this.onMouseDown(ev));
+    // load/error don't bubble, so listen in the capture phase. A loaded OS
+    // icon hides the built-in SVG beneath it; a failed one is dropped.
+    this.scroller.addEventListener("load", (ev) => {
+      if (ev.target.classList?.contains("os-icon")) ev.target.parentElement.classList.add("has-os-icon");
+    }, true);
+    this.scroller.addEventListener("error", (ev) => {
+      if (ev.target.classList?.contains("os-icon")) ev.target.remove();
+    }, true);
     window.addEventListener("mouseup", () => this.onMouseUp());
     this.scroller.addEventListener("dblclick", (ev) => {
       const i = this.indexAt(ev.target);

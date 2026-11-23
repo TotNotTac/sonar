@@ -25,6 +25,8 @@ const stroke = {
   close: '<path d="M6 6l12 12M18 6 6 18"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7"/>',
+  eject: '<path d="M5 18h14M12 5l7 8H5z"/>',
+  menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
 };
 stroke.root = stroke.drive;
 stroke.folder = '<path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>';

@@ -9,7 +9,7 @@
 
 import { Fmt } from "./format.js";
 import { Icons } from "./icons.js";
-import { esc } from "./util.js";
+import { assetUrl, esc } from "./util.js";
 
 const COLUMNS = [
   { key: "name", label: "Name" },
@@ -25,9 +25,19 @@ function itemClasses(pane, e) {
   return c.length ? ` class="${c.join(" ")}"` : "";
 }
 
-function entryIcon(e) {
+/**
+ * The built-in SVG, with the OS icon (or a thumbnail) layered on top. The
+ * image is lazy-loaded; if it fails, the pane removes it and the SVG remains.
+ */
+function entryIcon(e, size, { thumbnail = false } = {}) {
   const badge = e.isSymlink ? `<span class="link-badge">${Icons.ui("link")}</span>` : "";
-  return `${Icons.entry(e.icon)}${badge}`;
+  let img = "";
+  if (thumbnail && e.thumbnail) {
+    img = `<img class="os-icon thumb" loading="lazy" decoding="async" alt="" src="${esc(assetUrl("thumb", { path: e.path, size: size * 2 }))}">`;
+  } else if (e.iconKey) {
+    img = `<img class="os-icon" loading="lazy" decoding="async" alt="" src="${esc(assetUrl("icon", { key: e.iconKey, size }))}">`;
+  }
+  return `${Icons.entry(e.icon)}${img}${badge}`;
 }
 
 const sizeText = (e) => (e.kind === "directory" ? Fmt.items(e.childCount) : Fmt.bytes(e.size));
@@ -52,7 +62,7 @@ export class DetailsView {
   render() {
     const pane = this.pane;
     this.body.innerHTML = pane.items.map((e, i) => `<tr data-i="${i}"${itemClasses(pane, e)}>
-        <td class="name" title="${esc(e.name)}"><div class="name-cell"><span class="ficon">${entryIcon(e)}</span><span class="name-label">${esc(e.name)}</span></div></td>
+        <td class="name" title="${esc(e.name)}"><div class="name-cell"><span class="ficon">${entryIcon(e, 18)}</span><span class="name-label">${esc(e.name)}</span></div></td>
         <td class="num">${sizeText(e)}</td>
         <td>${Fmt.date(e.modified)}</td>
         <td title="${esc(e.typeLabel)}">${esc(e.typeLabel)}</td>
@@ -88,7 +98,7 @@ export class IconsView {
   render() {
     const pane = this.pane;
     this.root.innerHTML = pane.items.map((e, i) => `<div data-i="${i}"${itemClasses(pane, e)} title="${esc(e.name)}">
-        <span class="ficon big">${entryIcon(e)}</span>
+        <span class="ficon big">${entryIcon(e, 48, { thumbnail: true })}</span>
         <span class="tile-label">${esc(e.name)}</span>
       </div>`).join("");
   }
