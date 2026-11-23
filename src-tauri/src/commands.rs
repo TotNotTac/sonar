@@ -50,6 +50,8 @@ pub struct DirView {
     counts_complete: bool,
     /// Set when live updates couldn't be enabled; the listing is still valid.
     watch_error: Option<String>,
+    /// When browsing inside an archive: the archive file (contents are read-only).
+    archive: Option<PathBuf>,
 }
 
 #[derive(Clone, Serialize)]
@@ -138,17 +140,33 @@ pub async fn open_dir(
     // Sorting folders by size needs every count up front.
     options.count_children = options.sort.key == SortKey::Size;
 
-    let listing = {
+    // An archive, or a folder inside one, is listed from the archive itself.
+    let (listing, archive) = {
         let path = path.clone();
-        tauri::async_runtime::spawn_blocking(move || sonar_core::list_dir(&path, &options))
-            .await
-            .map_err(|e| CoreError::InvalidPath(format!("listing task failed: {e}")))??
+        tauri::async_runtime::spawn_blocking(move || match sonar_core::archive::split_virtual(&path) {
+            Some((archive, inner)) => {
+                sonar_core::archive::listing(&archive, &inner, &options).map(|l| (l, Some(archive)))
+            }
+            None => sonar_core::list_dir(&path, &options).map(|l| (l, None)),
+        })
+        .await
+        .map_err(|e| CoreError::InvalidPath(format!("listing task failed: {e}")))??
     };
 
     // A newer navigation in this pane started while we were reading; don't
     // touch the watcher or start counting for a folder nobody is looking at.
     let current = counter.load(Ordering::SeqCst) == generation;
-    let watch_error = if current { ensure_watching(&app, &state, &pane, &listing.path).err() } else { None };
+    let watch_error = match (&archive, current) {
+        (_, false) => None,
+        (None, true) => ensure_watching(&app, &state, &pane, &listing.path).err(),
+        (Some(_), true) => {
+            // Archive contents don't change underneath us; stop watching the old folder.
+            if let Some(slot) = state.panes().get_mut(&pane) {
+                slot.watcher = None;
+            }
+            None
+        }
+    };
 
     let pending: Vec<(String, PathBuf)> = listing
         .entries
@@ -163,7 +181,14 @@ pub async fn open_dir(
     }
 
     let crumbs = breadcrumbs(&listing.path, dirs::home_dir().as_deref());
-    Ok(DirView { listing, crumbs, generation, counts_complete, watch_error: watch_error.map(|e| e.to_string()) })
+    Ok(DirView {
+        listing,
+        crumbs,
+        generation,
+        counts_complete,
+        watch_error: watch_error.map(|e| e.to_string()),
+        archive,
+    })
 }
 
 /// Forget a closed pane: stops its watcher and any count job.
@@ -222,9 +247,16 @@ fn count_children(
 /// Open a file (or macOS app bundle) with the system's default handler.
 #[tauri::command]
 pub async fn open_path(path: PathBuf) -> Result<(), CoreError> {
-    tauri::async_runtime::spawn_blocking(move || sonar_core::open_path(&path))
-        .await
-        .map_err(|e| CoreError::InvalidPath(format!("open task failed: {e}")))?
+    tauri::async_runtime::spawn_blocking(move || {
+        // A file inside an archive: extract just that file to a temp folder first.
+        let real = match sonar_core::archive::split_virtual(&path) {
+            Some((archive, inner)) if !inner.is_empty() => sonar_core::archive::extract_for_opening(&archive, &inner)?,
+            _ => path,
+        };
+        sonar_core::open_path(&real)
+    })
+    .await
+    .map_err(|e| CoreError::InvalidPath(format!("open task failed: {e}")))?
 }
 
 /// Resolve text typed into the editable location bar.

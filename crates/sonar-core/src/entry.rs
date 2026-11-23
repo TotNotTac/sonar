@@ -44,6 +44,8 @@ pub struct Entry {
     pub icon_key: Option<String>,
     /// Whether a thumbnail can be generated for this file.
     pub thumbnail: bool,
+    /// An archive Sonar can browse into and extract.
+    pub archive: bool,
 }
 
 impl Entry {
@@ -77,6 +79,7 @@ impl Entry {
 
         let ft = filetype::describe_native(&name, &path, kind);
         let thumbnail = kind == EntryKind::File && crate::thumbnail::supported(&name);
+        let archive = kind == EntryKind::File && crate::archive::is_archive(&name);
 
         Some(Entry {
             name,
@@ -93,6 +96,7 @@ impl Entry {
             type_id: ft.type_id,
             icon_key: ft.icon_key,
             thumbnail,
+            archive,
         })
     }
 

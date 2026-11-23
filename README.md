@@ -4,7 +4,7 @@ A file manager inspired by KDE Dolphin, built with Tauri 2 and Rust. Targets mac
 
 **Status:** browsing, live updates, opening files, and file operations (rename, new folder, trash, delete, copy/cut/paste with progress and conflict handling, undo), drag and drop (within Sonar and with other apps),
 the system clipboard, tabs, split view and rubber-band selection, OS file types and icons, image thumbnails,
-disk usage and mount/eject in the sidebar, and a native menu bar on macOS.
+disk usage and mount/eject in the sidebar, a native menu bar on macOS, and archives (browse, extract, compress).
 
 ## Layout
 
@@ -19,6 +19,7 @@ crates/sonar-core/      UI-agnostic filesystem model (no Tauri dependency)
   src/clipboard.rs      file-list formats: file:// URIs, uri-list, GNOME/KDE cut markers
   src/thumbnail.rs      image thumbnails, cached per the freedesktop thumbnail spec
   src/volumes.rs        parsing lsblk / udisksctl output (removable media on Linux)
+  src/archive.rs        archives via bsdtar (libarchive): list, browse, extract, compress
   src/filetype.rs       extension-based type labels and icon hints
   src/watch.rs          debounced folder watcher (FSEvents / inotify via `notify`)
   src/ops/              file operations
@@ -61,6 +62,25 @@ npm install
 npm run dev      # tauri dev
 npm run build    # release bundle (.app/.dmg on macOS; .deb/.rpm/AppImage on Linux)
 ```
+
+## Making Sonar your default file manager
+
+Sonar opens folders it is asked to show in a new tab of the running window (a file is shown selected in its
+folder). `sonar ~/Downloads` works from a terminal too.
+
+**macOS** (Finder itself can't be replaced, but folder-open requests can go to Sonar):
+
+1. Copy Sonar.app to /Applications and open it once (the build is unsigned: allow it under
+   System Settings → Privacy & Security).
+2. `brew install duti && duti -s dev.sonar.filemanager public.folder all`
+
+Now `open ~/Downloads`, folders opened from other apps and the Dock open in Sonar. Folders you double-click
+inside Finder windows still open in Finder. Undo with `duti -s com.apple.finder public.folder all`.
+
+**Arch Linux / KDE Plasma:** with the `.deb`/`.rpm` package the launcher is installed; for the AppImage, create
+`~/.local/share/applications/sonar.desktop` from `src-tauri/linux/sonar.desktop` with `Exec=/path/to/Sonar.AppImage %U`.
+Then pick Sonar under System Settings → Default Applications → File Manager, or run
+`xdg-mime default sonar.desktop inode/directory` (use `Sonar.desktop` for the packaged launcher).
 
 ## Tests
 
@@ -109,6 +129,19 @@ Drag items onto folders, a pane's empty space, places, breadcrumbs or tabs (hove
 Dropping asks Move Here / Copy Here; hold Shift to move or Ctrl (⌥ on macOS) to copy without asking. Drag
 out of the window to drop files on other apps; files dragged in from other apps drop the same way. Drag on
 empty space, or on a row outside its name, to rubber-band select (Ctrl/⌘ toggles, Shift adds).
+
+### Archives
+
+zip, 7z, rar, tar (gz/xz/bz2/zst), iso and more, through `bsdtar` (libarchive: built into macOS; on Arch
+it's always installed since pacman depends on it; Debian/Ubuntu: `libarchive-tools`).
+
+- Double-click an archive to browse it like a (read-only) folder; copy, paste or drag items out to extract
+  just those. Opening a file inside an archive extracts it to a temporary folder first.
+- **Extract Here** (context menu): a single top-level folder is extracted as is; several items go into a
+  new folder named after the archive. Nothing is ever overwritten. With split view, **Extract to** the other side.
+- **Compress** (context menu): zip, 7z, tar.gz, tar.xz or tar.bz2, next to the selection.
+
+Extracting and compressing run as background jobs with progress, cancel and undo.
 
 Deleting inside the Trash always deletes permanently. Copies and moves run in the background with a progress
 panel; name clashes ask Skip / Keep Both / Replace (or Merge for folders), optionally for all remaining conflicts.

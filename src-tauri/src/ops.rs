@@ -8,6 +8,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
+use sonar_core::archive;
 use sonar_core::ops::{self, Conflict, ConflictChoice, Progress, TransferKind, TransferObserver, UndoAction};
 use sonar_core::CoreError;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -153,11 +154,21 @@ struct JobConflict {
 #[serde(rename_all = "camelCase")]
 struct JobFinished {
     id: u64,
-    kind: TransferKind,
+    /// "copy", "move", "extract" or "compress".
+    kind: &'static str,
     cancelled: bool,
     /// Top-level items that were fully transferred.
     completed: usize,
     errors: Vec<String>,
+    /// Top-level items the job created (for selecting them afterwards).
+    created: Vec<PathBuf>,
+}
+
+const fn kind_name(kind: TransferKind) -> &'static str {
+    match kind {
+        TransferKind::Copy => "copy",
+        TransferKind::Move => "move",
+    }
 }
 
 struct EventObserver {
@@ -199,22 +210,183 @@ pub fn start_transfer(app: AppHandle, state: State<'_, OpsState>, request: Trans
         .name(format!("sonar-job-{id}"))
         .spawn(move || {
             let TransferRequest { kind, sources, dest_dir } = request;
+            let ops_state = app.state::<OpsState>();
+            // Items browsed inside an archive are copied out by extracting them.
+            if sources.first().and_then(|s| archive::split_virtual(s)).is_some_and(|(_, inner)| !inner.is_empty()) {
+                let fin = extract_entries(&app, id, &cancel, &sources, &dest_dir);
+                lock(&ops_state.jobs).remove(&id);
+                let _ = app.emit(EVENT_JOB_FINISHED, fin);
+                return;
+            }
+            if archive::split_virtual(&dest_dir).is_some() {
+                lock(&ops_state.jobs).remove(&id);
+                let errors = vec![format!("“{}” is an archive; its contents are read-only", dest_dir.display())];
+                let fin =
+                    JobFinished { id, kind: kind_name(kind), cancelled: false, completed: 0, errors, created: vec![] };
+                let _ = app.emit(EVENT_JOB_FINISHED, fin);
+                return;
+            }
             let mut observer = EventObserver { app: app.clone(), id, answers: rx };
             let out = ops::run_transfer(kind, &sources, &dest_dir, &cancel, &mut observer);
 
-            let ops_state = app.state::<OpsState>();
             lock(&ops_state.jobs).remove(&id);
             let completed = out.created.len() + out.moved.len();
+            let created: Vec<PathBuf> =
+                out.created.iter().cloned().chain(out.moved.iter().map(|(_, to)| to.clone())).collect();
             match kind {
                 TransferKind::Copy if !out.created.is_empty() => ops_state.push_undo(UndoAction::Copy(out.created)),
                 TransferKind::Move if !out.moved.is_empty() => ops_state.push_undo(UndoAction::Move(out.moved)),
                 _ => {}
             }
             let errors = out.errors.iter().map(ToString::to_string).collect();
-            let _ = app.emit(EVENT_JOB_FINISHED, JobFinished { id, kind, cancelled: out.cancelled, completed, errors });
+            let fin = JobFinished { id, kind: kind_name(kind), cancelled: out.cancelled, completed, errors, created };
+            let _ = app.emit(EVENT_JOB_FINISHED, fin);
         })
         .expect("failed to spawn job thread");
     id
+}
+
+// ---------- Archive jobs ----------
+
+/// Emits `job-progress` for archive jobs (entry counts), at most every 100 ms.
+fn archive_progress(app: &AppHandle, id: u64) -> impl FnMut(u64, u64, &str) + '_ {
+    let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
+    move |done, total, current| {
+        if done < total && last.elapsed() < std::time::Duration::from_millis(100) {
+            return;
+        }
+        last = std::time::Instant::now();
+        let progress =
+            Progress { total_items: total, done_items: done, current: Some(current.to_string()), ..Default::default() };
+        let _ = app.emit(EVENT_JOB_PROGRESS, JobProgress { id, progress });
+    }
+}
+
+/// Copy items out of a browsed archive folder into `dest_dir`.
+fn extract_entries(
+    app: &AppHandle,
+    id: u64,
+    cancel: &AtomicBool,
+    sources: &[PathBuf],
+    dest_dir: &std::path::Path,
+) -> JobFinished {
+    let fail = |msg: String| JobFinished {
+        id,
+        kind: "copy",
+        cancelled: false,
+        completed: 0,
+        errors: vec![msg],
+        created: vec![],
+    };
+    let parts: Vec<(PathBuf, String)> = sources.iter().filter_map(|s| archive::split_virtual(s)).collect();
+    let Some((archive_path, first)) = parts.first().cloned() else { return fail("Nothing to copy".into()) };
+    let dir = first.rsplit_once('/').map_or("", |(d, _)| d).to_string();
+    let same_folder = parts.len() == sources.len()
+        && parts.iter().all(|(a, inner)| *a == archive_path && inner.rsplit_once('/').map_or("", |(d, _)| d) == dir);
+    if !same_folder {
+        return fail("Items from different archive folders can't be copied together".into());
+    }
+    let names: Vec<String> =
+        parts.iter().map(|(_, inner)| inner.rsplit('/').next().unwrap_or(inner).to_string()).collect();
+    match archive::extract(&archive_path, dest_dir, Some((&dir, &names)), cancel, &mut archive_progress(app, id)) {
+        Ok(Some(created)) => {
+            if !created.is_empty() {
+                app.state::<OpsState>().push_undo(UndoAction::Created("Extract", created.clone()));
+            }
+            JobFinished { id, kind: "copy", cancelled: false, completed: created.len(), errors: vec![], created }
+        }
+        Ok(None) => JobFinished { id, kind: "copy", cancelled: true, completed: 0, errors: vec![], created: vec![] },
+        Err(e) => fail(e.to_string()),
+    }
+}
+
+/// Run `work` as a cancellable background job reporting through `job-*` events.
+fn spawn_job(
+    app: AppHandle,
+    state: &OpsState,
+    work: impl FnOnce(&AppHandle, u64, &AtomicBool) -> JobFinished + Send + 'static,
+) -> u64 {
+    let id = state.next_job.fetch_add(1, Ordering::Relaxed) + 1;
+    let cancel = Arc::new(AtomicBool::new(false));
+    let (tx, _rx) = mpsc::channel(); // archive jobs never ask about conflicts
+    lock(&state.jobs).insert(id, JobControl { cancel: cancel.clone(), answers: tx });
+    std::thread::Builder::new()
+        .name(format!("sonar-job-{id}"))
+        .spawn(move || {
+            let fin = work(&app, id, &cancel);
+            lock(&app.state::<OpsState>().jobs).remove(&id);
+            let _ = app.emit(EVENT_JOB_FINISHED, fin);
+        })
+        .expect("failed to spawn job thread");
+    id
+}
+
+/// "Extract Here": each archive next to itself (or into `dest_dir`), with
+/// Ark-style subfolder detection. Never overwrites.
+#[tauri::command]
+pub fn start_extract(
+    app: AppHandle,
+    state: State<'_, OpsState>,
+    archives: Vec<PathBuf>,
+    dest_dir: Option<PathBuf>,
+) -> u64 {
+    spawn_job(app, &state, move |app, id, cancel| {
+        let mut created = Vec::new();
+        let mut errors = Vec::new();
+        for a in &archives {
+            let Some(dest) = dest_dir.clone().or_else(|| a.parent().map(PathBuf::from)) else { continue };
+            match archive::extract(a, &dest, None, cancel, &mut archive_progress(app, id)) {
+                Ok(Some(items)) => created.extend(items),
+                Ok(None) => break,
+                Err(e) => errors.push(e.to_string()),
+            }
+        }
+        if !created.is_empty() {
+            app.state::<OpsState>().push_undo(UndoAction::Created("Extract", created.clone()));
+        }
+        let cancelled = cancel.load(Ordering::Relaxed);
+        JobFinished { id, kind: "extract", cancelled, completed: created.len(), errors, created }
+    })
+}
+
+/// "Compress": `sources` (siblings) into a new archive next to them, named
+/// after the item (or "Archive") without overwriting anything.
+#[tauri::command]
+pub fn start_compress(
+    app: AppHandle,
+    state: State<'_, OpsState>,
+    sources: Vec<PathBuf>,
+    format: archive::Format,
+) -> u64 {
+    spawn_job(app, &state, move |app, id, cancel| {
+        let fail = |msg: String| JobFinished {
+            id,
+            kind: "compress",
+            cancelled: false,
+            completed: 0,
+            errors: vec![msg],
+            created: vec![],
+        };
+        let Some(parent) = sources.first().and_then(|s| s.parent()) else { return fail("Nothing to compress".into()) };
+        let dest = ops::available_name(parent, &archive::default_name(&sources, format), false);
+        match archive::compress(&sources, &dest, format, cancel, &mut archive_progress(app, id)) {
+            Ok(Some(path)) => {
+                app.state::<OpsState>().push_undo(UndoAction::Created("Compress", vec![path.clone()]));
+                JobFinished {
+                    id,
+                    kind: "compress",
+                    cancelled: false,
+                    completed: 1,
+                    errors: vec![],
+                    created: vec![path],
+                }
+            }
+            Ok(None) => {
+                JobFinished { id, kind: "compress", cancelled: true, completed: 0, errors: vec![], created: vec![] }
+            }
+            Err(e) => fail(e.to_string()),
+        }
+    })
 }
 
 #[tauri::command]

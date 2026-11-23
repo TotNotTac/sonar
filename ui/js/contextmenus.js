@@ -1,6 +1,6 @@
 // Context menu contents. Each builder returns items for menu.js.
 
-import { isMac, shortcut } from "./util.js";
+import { invoke, isMac, shortcut } from "./util.js";
 
 const keys = {
   newFolder: shortcut("mod+shift+N"),
@@ -30,10 +30,34 @@ export function itemsMenu(app, pane, info = {}) {
   const one = sel.length === 1 ? sel[0] : null;
   const folder = one && pane.isFolder(one) ? one : null;
   const inTrash = ops.inTrash(pane);
+  const archive = pane.view?.archive;
+  if (archive) {
+    // Inside an archive: read-only, so only opening and copying out.
+    const outside = archive.replace(/\/[^/]*$/, "") || "/";
+    return [
+      { label: "Open", shortcut: "Enter", action: () => pane.openSelection() },
+      "-",
+      { label: `Extract to “${app.folderLabel(outside)}”`, action: () => ops.extractSelectionOut(pane) },
+      { label: "Copy", shortcut: keys.copy, action: () => ops.setClipboard("copy", pane) },
+      { label: "Copy Location", shortcut: keys.copyLocation, action: () => ops.copyLocation(pane) },
+    ];
+  }
+  const archives = sel.every((e) => e.archive);
+  const other = app.activeTab.panes.length === 2 ? app.activeTab.panes.find((p) => p !== pane) : null;
+  const compress = {
+    label: "Compress",
+    submenu: [["zip", "as ZIP"], ["sevenZip", "as 7-Zip"], ["tarGz", "as tar.gz"], ["tarXz", "as tar.xz"], ["tarBz2", "as tar.bz2"]]
+      .map(([format, label]) => ({ label, action: () => ops.compress(format, pane) })),
+  };
   return [
     { label: "Open", shortcut: "Enter", action: () => pane.openSelection() },
     folder && { label: "Open in New Tab", action: () => app.newTab(folder.path, { activate: false }) },
     folder && { label: "Open in Split View", action: () => app.openInSplit(folder.path) },
+    archives && { label: "Open With Default App", action: () => sel.forEach((e) => invoke("open_path", { path: e.path }).catch(() => {})) },
+    "-",
+    archives && { label: "Extract Here", action: () => ops.extract(pane) },
+    archives && other?.path && !other.view?.archive && { label: `Extract to “${app.folderLabel(other.path)}”`, action: () => ops.extract(pane, other.path) },
+    compress,
     "-",
     { label: "Cut", shortcut: keys.cut, action: () => ops.setClipboard("cut", pane) },
     { label: "Copy", shortcut: keys.copy, action: () => ops.setClipboard("copy", pane) },
@@ -64,8 +88,8 @@ export function backgroundMenu(app, pane, { undoLabel = null, canPaste = false }
   const order = (o, label) => ({ label, checked: sort.order === o, action: () => pane.setSort({ key: sort.key, order: o }) });
   const split = app.activeTab.panes.length === 2;
   return [
-    { label: "New Folder…", shortcut: keys.newFolder, action: () => ops.newFolder(pane) },
-    { label: "Paste", shortcut: keys.paste, disabled: !canPaste, action: () => ops.paste(pane.path) },
+    { label: "New Folder…", shortcut: keys.newFolder, disabled: !!pane.view?.archive, action: () => ops.newFolder(pane) },
+    { label: "Paste", shortcut: keys.paste, disabled: !canPaste || !!pane.view?.archive, action: () => ops.paste(pane.path) },
     isMac && canPaste && { label: "Move Here", shortcut: keys.pasteMove, action: () => ops.paste(pane.path, { move: true }) },
     { label: undoLabel ? `Undo ${undoLabel}` : "Undo", shortcut: keys.undo, disabled: !undoLabel, action: () => ops.undo() },
     "-",

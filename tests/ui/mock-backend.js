@@ -41,6 +41,47 @@
   write(`${HOME}/Documents/notes.txt`, 900, now);
   write(`${HOME}/Documents/Projects/sonar/main.rs`, 4000, now);
   write(`${HOME}/Downloads/big.iso`, 50 * 1024 * 1024, now - 5 * day);
+
+  // ---------- Archives (contents kept beside the fs) ----------
+  const archives = new Map(); // archive path -> [{ path, isDir, size }]
+  const ARCHIVE_RE = /\.(zip|7z|rar|tar\.gz|tar\.xz|tar\.bz2|tgz)$/i;
+  const archiveStem = (name) => name.replace(ARCHIVE_RE, "");
+  function addArchive(path, items) {
+    write(path, 4096);
+    const all = new Map();
+    for (const it of items) {
+      const parts = it.path.split("/");
+      for (let i = 1; i < parts.length; i++) {
+        const dir = parts.slice(0, i).join("/");
+        if (!all.has(dir)) all.set(dir, { path: dir, isDir: true, size: 0 });
+      }
+      all.set(it.path, it);
+    }
+    archives.set(path, [...all.values()]);
+  }
+  addArchive(`${HOME}/Downloads/photos.zip`, [
+    { path: "photos/2025/beach.jpg", isDir: false, size: 2000 },
+    { path: "photos/2025/sunset.jpg", isDir: false, size: 3000 },
+    { path: "photos/readme.txt", isDir: false, size: 12 },
+  ]);
+  addArchive(`${HOME}/Downloads/bundle.tar.gz`, [
+    { path: "a.txt", isDir: false, size: 1 },
+    { path: "b.txt", isDir: false, size: 1 },
+  ]);
+  /** [archive, inner] for paths inside (or at) an archive, else null. */
+  function splitVirtual(path) {
+    let p = path;
+    const inner = [];
+    while (p && p !== "/") {
+      if (archives.has(p)) return [p, inner.reverse().join("/")];
+      if (fs.has(p)) return null;
+      inner.push(nameOf(p));
+      p = parentOf(p);
+    }
+    return null;
+  }
+  const archiveChildren = (archive, dir) =>
+    archives.get(archive).filter((e) => parentOf(`/${e.path}`) === (dir ? `/${dir}` : "/"));
   for (let i = 1; i <= 12; i++) write(`${HOME}/Pictures/photo${i}.png`, 100000 + i, now - i * day);
   write(`${HOME}/Pictures/photo-copy.unknown`, 10);
 
@@ -62,6 +103,7 @@
       typeId: dir ? "inode/directory" : `mock/${ext || "unknown"}`,
       iconKey: dir ? "folder" : `${icon}-x-generic,unknown`,
       thumbnail: ext === "png",
+      archive: ARCHIVE_RE.test(name),
     };
   }
 
@@ -220,7 +262,7 @@
     touched(destDir);
     sources.forEach((s) => touched(parentOf(s)));
     progress(null);
-    emit("job-finished", { id, kind, cancelled: !!job.cancelled, completed: created.length + moved.length, errors: [] });
+    emit("job-finished", { id, kind, cancelled: !!job.cancelled, completed: created.length + moved.length, errors: [], created: [...created, ...moved.map(([, b]) => b)] });
   }
 
   // ---------- Commands ----------
@@ -247,6 +289,28 @@
     },
     home_dir: () => HOME,
     open_dir: ({ pane, path, options = {} }) => {
+      const virt = splitVirtual(path);
+      if (virt) {
+        const [archive, inner] = virt;
+        if (inner && !archives.get(archive).some((e) => e.path === inner && e.isDir)) throw notFound(path);
+        const generation = (generations.get(pane) ?? 0) + 1;
+        generations.set(pane, generation);
+        watching.delete(pane);
+        const entries = archiveChildren(archive, inner).map((e) => {
+          const name = nameOf(`/${e.path}`);
+          const ext = name.includes(".") ? name.split(".").pop() : "";
+          return {
+            name, path: `${path}/${name}`, kind: e.isDir ? "directory" : "file", isSymlink: false, isHidden: false, readonly: true,
+            size: e.isDir ? null : e.size, childCount: e.isDir ? archiveChildren(archive, e.path).length : null, modified: now,
+            typeLabel: e.isDir ? "Folder" : `${ext.toUpperCase()} file`, icon: e.isDir ? "folder" : "file",
+            typeId: null, iconKey: null, thumbnail: false, archive: false,
+          };
+        });
+        return {
+          path, parent: parentOf(path), entries: sortEntries(entries, options.sort), hiddenCount: 0, skippedCount: 0,
+          crumbs: crumbs(path), generation, countsComplete: true, watchError: null, archive,
+        };
+      }
       const node = fs.get(path);
       if (!node) throw notFound(path);
       if (node.kind !== "dir") throw err("notADirectory", `"${path}" is not a folder`);
@@ -275,6 +339,7 @@
       return p.replace(/\/+$/, "") || "/";
     },
     open_path: ({ path }) => {
+      window.__mock.opened.push(path);
       if (path.endsWith(".unknown")) throw err("open", `Could not open "${path}": no application knows how to open it`);
     },
     rename_entry: ({ path, newName }) => {
@@ -307,7 +372,72 @@
       paths.forEach((p) => { descendants(p).forEach((q) => fs.delete(q)); touched(parentOf(p)); });
       return { done: paths.length, errors: [] };
     },
+    start_extract: ({ archives: list, destDir }) => {
+      const id = nextJob++;
+      setTimeout(() => {
+        const created = [];
+        for (const a of list) {
+          const dest = destDir ?? parentOf(a);
+          const entries = archives.get(a);
+          const roots = entries.filter((e) => !e.path.includes("/"));
+          const base = roots.length === 1 ? roots[0].path : archiveStem(nameOf(a));
+          const target = fs.has(join(dest, base)) ? keepBoth(dest, base, true) : join(dest, base);
+          const prefix = roots.length === 1 ? `${roots[0].path}` : "";
+          mkdir(target);
+          for (const e of entries) {
+            const rel = prefix ? e.path.slice(prefix.length + 1) : e.path;
+            if (!rel) continue;
+            if (e.isDir) mkdir(join(target, rel)); else write(join(target, rel), e.size);
+          }
+          created.push(target);
+          touched(dest);
+        }
+        undoStack.push({ label: "Extract", run: () => created.forEach((p) => move(p, join(TRASH, nameOf(p)))) });
+        emit("job-progress", { id, totalBytes: 0, doneBytes: 0, totalItems: 3, doneItems: 3, current: null });
+        emit("job-finished", { id, kind: "extract", cancelled: false, completed: created.length, errors: [], created });
+      }, 20);
+      return id;
+    },
+    start_compress: ({ sources, format }) => {
+      const id = nextJob++;
+      const ext = { zip: "zip", sevenZip: "7z", tarGz: "tar.gz", tarXz: "tar.xz", tarBz2: "tar.bz2" }[format];
+      setTimeout(() => {
+        const dir = parentOf(sources[0]);
+        const name = `${sources.length === 1 ? nameOf(sources[0]) : "Archive"}.${ext}`;
+        const dest = fs.has(join(dir, name)) ? keepBoth(dir, name, false) : join(dir, name);
+        const items = sources.flatMap((s) => descendants(s).map((p) => ({ path: p.slice(dir.length + 1), isDir: fs.get(p).kind === "dir", size: fs.get(p).size ?? 0 })));
+        addArchive(dest, items);
+        undoStack.push({ label: "Compress", run: () => move(dest, join(TRASH, nameOf(dest))) });
+        touched(dir);
+        emit("job-finished", { id, kind: "compress", cancelled: false, completed: 1, errors: [], created: [dest] });
+      }, 20);
+      return id;
+    },
     start_transfer: ({ request }) => {
+      const virt = splitVirtual(request.sources[0]);
+      if (virt && virt[1]) {
+        // Copying out of an archive = extracting those entries.
+        const id = nextJob++;
+        setTimeout(() => {
+          const created = [];
+          for (const src of request.sources) {
+            const [archive, inner] = splitVirtual(src);
+            const entry = archives.get(archive).find((e) => e.path === inner);
+            const target = fs.has(join(request.destDir, nameOf(src))) ? keepBoth(request.destDir, nameOf(src), entry.isDir) : join(request.destDir, nameOf(src));
+            if (entry.isDir) {
+              mkdir(target);
+              for (const e of archives.get(archive).filter((x) => x.path.startsWith(`${inner}/`))) {
+                const rel = e.path.slice(inner.length + 1);
+                if (e.isDir) mkdir(join(target, rel)); else write(join(target, rel), e.size);
+              }
+            } else write(target, entry.size);
+            created.push(target);
+          }
+          touched(request.destDir);
+          emit("job-finished", { id, kind: "copy", cancelled: false, completed: created.length, errors: [], created });
+        }, 20);
+        return id;
+      }
       const id = nextJob++;
       jobs.set(id, { cancelled: false, answer: null });
       setTimeout(() => runTransfer(id, request), 0);
@@ -331,6 +461,7 @@
     },
     start_drag_out: ({ paths }) => { window.__mock.dragOuts.push(paths); },
     has_native_menu: () => window.__mock.nativeMenu,
+    take_open_requests: () => window.__mock.openRequests.splice(0),
     set_menu_state: ({ state }) => { window.__mock.menuState = state; },
     undo_label: () => undoStack.at(-1)?.label ?? null,
     undo: () => {
@@ -346,8 +477,14 @@
     HOME, TRASH, fs, calls, emit, watching, undoStack, mkdir, write, touched,
     denied: new Set(),
     clipboard: null,
+    opened: [],
+    archiveEntries: (p) => archives.get(p),
     busy: new Set(),
     nativeMenu: false,
+    /** Folders "the OS" asked to show at startup (Sonar as default file manager). */
+    openRequests: [],
+    /** Simulate a later request (Finder, `sonar <folder>` while running). */
+    requestOpen: (reqs) => emit("open-paths", reqs),
     menuState: null,
     /** Simulate a click in the native menu bar. */
     menu: (id) => emit("menu", id),

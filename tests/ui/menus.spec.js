@@ -9,7 +9,7 @@ test("item context menu for a folder", async ({ page }) => {
   await item(activePane(page), "Music").click({ button: "right" });
   await expect(item(activePane(page), "Music")).toHaveClass(/selected/);
   await expect(menuLabels(page)).toHaveText([
-    "Open", "Open in New Tab", "Open in Split View", "Cut", "Copy", "Paste Into Folder", "Copy Location",
+    "Open", "Open in New Tab", "Open in Split View", "Compress", "Cut", "Copy", "Paste Into Folder", "Copy Location",
     "Rename…", "Move to Trash", "Delete Permanently…",
   ]);
   await expect(page.locator(".menu-item", { hasText: "Paste Into Folder" })).toHaveClass(/disabled/);

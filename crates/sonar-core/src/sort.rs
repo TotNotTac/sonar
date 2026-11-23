@@ -114,6 +114,7 @@ mod tests {
             type_id: None,
             icon_key: None,
             thumbnail: false,
+            archive: false,
         }
     }
 

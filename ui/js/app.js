@@ -61,7 +61,20 @@ export class App {
     this.home = (await invoke("home_dir")) ?? "/";
     this.nativeMenu = await invoke("has_native_menu").catch(() => false);
     document.body.classList.toggle("native-menu", this.nativeMenu);
-    if (!this.restoreSession()) this.newTab(this.home);
+    // Folders the OS asked us to show (Sonar as the default file manager):
+    // listen first, then collect what arrived before we were ready.
+    listen("open-paths", ({ payload }) => this.openRequested(payload));
+    const requested = await invoke("take_open_requests").catch(() => []);
+    const restored = this.restoreSession();
+    if (requested.length) this.openRequested(requested);
+    else if (!restored) this.newTab(this.home);
+  }
+
+  /** Open each requested folder in a new tab (selecting a requested file). */
+  openRequested(requests) {
+    let last = null;
+    for (const { folder, select } of requests) last = this.addTab([folder], { select, index: this.tabs.length });
+    if (last) this.activateTab(last);
   }
 
   // ---------- Actions (shared by the menu bar, the ☰ menu and shortcuts) ----------
@@ -205,13 +218,13 @@ export class App {
   }
 
   /** Create a tab showing `paths` (one, or two for a split) at `index`. Does not activate it. */
-  addTab(paths, { active = 0, index } = {}) {
+  addTab(paths, { active = 0, index, select } = {}) {
     const tab = { id: nextTabId++, panes: [], active: 0, el: el("div", "tab-panes") };
     tab.el.hidden = true;
     const at = index ?? (this.activeTab ? this.tabs.indexOf(this.activeTab) + 1 : this.tabs.length);
     this.tabs.splice(Math.min(at, this.tabs.length), 0, tab);
     this.els.panes.append(tab.el);
-    for (const p of paths.slice(0, 2)) this.createPane(tab, p);
+    for (const p of paths.slice(0, 2)) this.createPane(tab, p, select);
     tab.active = Math.min(active, tab.panes.length - 1);
     tab.el.classList.toggle("split", tab.panes.length === 2);
     return tab;

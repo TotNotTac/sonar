@@ -29,6 +29,25 @@ pub fn resolve_user_path(input: &str, cwd: &Path) -> Result<PathBuf> {
     Ok(normalize(&raw))
 }
 
+/// Paths from command-line arguments (`sonar ~/Downloads file:///tmp/x.txt`),
+/// as file managers get them from desktop launchers (`Exec=sonar %U`).
+/// Flags are skipped; relative paths resolve against `cwd`.
+pub fn paths_from_args<S: AsRef<str>>(args: &[S], cwd: &Path) -> Vec<PathBuf> {
+    args.iter()
+        .map(AsRef::as_ref)
+        .filter(|a| !a.is_empty() && !a.starts_with('-'))
+        .filter_map(|a| {
+            if a.starts_with("file://") {
+                crate::clipboard::uri_to_path(a) // percent-decoded, unlike resolve_user_path
+            } else if a.contains("://") {
+                None // other URL schemes (smb://, sftp://) aren't supported yet
+            } else {
+                resolve_user_path(a, cwd).ok()
+            }
+        })
+        .collect()
+}
+
 fn normalize(p: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for c in p.components() {
@@ -59,5 +78,19 @@ mod tests {
         assert_eq!(resolve_user_path("file:///tmp", cwd).unwrap(), Path::new("/tmp"));
         assert!(resolve_user_path("~", cwd).unwrap().is_absolute());
         assert!(resolve_user_path("  ", cwd).is_err());
+    }
+
+    #[test]
+    fn args() {
+        let cwd = Path::new("/home/me");
+        let got = paths_from_args(
+            &["--new-window", "Downloads", "/tmp/x", "file:///tmp/a%20b/c.txt", "smb://nas/share", "", "../other"],
+            cwd,
+        );
+        assert_eq!(
+            got,
+            [PathBuf::from("/home/me/Downloads"), "/tmp/x".into(), "/tmp/a b/c.txt".into(), "/home/other".into()]
+        );
+        assert!(paths_from_args::<&str>(&[], cwd).is_empty());
     }
 }

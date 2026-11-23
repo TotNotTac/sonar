@@ -95,7 +95,12 @@ export class DragDrop {
   /** The pointer left the window: continue as a native drag other apps understand. */
   dragOut() {
     const paths = this.drag.paths;
+    const archive = this.drag.pane.view?.archive;
     this.end();
+    if (archive) {
+      this.app.flashStatus("Items inside an archive can't be dragged to other apps — extract them first");
+      return;
+    }
     invoke("start_drag_out", { paths }).catch((err) => this.app.pane.showMessage(errMsg(err)));
   }
 
@@ -135,6 +140,7 @@ export class DragDrop {
       path = target.dataset.path;
     } else if (paneEl) {
       const pane = this.app.findPane(paneEl.dataset.pane);
+      if (pane?.view?.archive) return tab ? { tab } : null; // read-only
       const itemEl = node.closest("[data-i]");
       const entry = itemEl && pane?.items[Number(itemEl.dataset.i)];
       if (entry && pane.isFolder(entry) && !paths.includes(entry.path)) {

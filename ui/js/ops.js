@@ -25,7 +25,7 @@ export class Ops {
   // ---------- Inline rename ----------
 
   beginRename(pane = this.pane, i = pane.selected.has(pane.focus) ? pane.focus : [...pane.selected][0]) {
-    if (pane.renaming || i == null || i < 0) return;
+    if (pane.renaming || i == null || i < 0 || this.readOnly(pane)) return;
     const e = pane.items[i];
     const label = pane.viewImpl.label(i);
     if (!e || !label) return;
@@ -82,7 +82,7 @@ export class Ops {
   // ---------- New folder ----------
 
   async newFolder(pane = this.pane) {
-    if (!pane.path) return;
+    if (!pane.path || this.readOnly(pane)) return;
     try {
       const path = await invoke("create_folder", { dir: pane.path });
       const name = basename(path);
@@ -113,7 +113,7 @@ export class Ops {
 
   async removeSelected({ permanent = false } = {}, pane = this.pane) {
     const items = pane.selectedEntries();
-    if (!items.length) return;
+    if (!items.length || this.readOnly(pane)) return;
     // Items already in the trash can only be deleted for real.
     permanent ||= this.inTrash(pane);
     const what = this.describe(items);
@@ -151,6 +151,7 @@ export class Ops {
   setClipboard(mode, pane = this.pane) {
     const items = pane.selectedEntries();
     if (!items.length) return;
+    if (mode === "cut" && this.readOnly(pane)) return;
     const paths = items.map((e) => e.path);
     this.setCutMarks(mode, paths);
     const what = this.describe(items);
@@ -178,6 +179,10 @@ export class Ops {
   /** Paste into `destDir`. `move` forces a move (⌘⌥V on macOS, like Finder). */
   async paste(destDir = this.pane.path, { move = false } = {}) {
     if (!destDir) return;
+    if (this.archiveOf(destDir)) {
+      this.app.flashStatus(`“${basename(this.archiveOf(destDir))}” is read-only — paste into a regular folder`);
+      return;
+    }
     const clip = await this.readClipboard();
     if (!clip?.paths?.length) {
       this.app.flashStatus("The clipboard has no files to paste");
@@ -204,21 +209,75 @@ export class Ops {
   }
 
   async startJob(kind, sources, destDir, meta = {}) {
+    const fromArchive = this.archiveOf(sources[0]);
+    if (fromArchive && kind === "move") {
+      kind = "copy"; // archives are read-only: moving out of one copies
+      this.app.flashStatus(`“${basename(fromArchive)}” is read-only; copying instead of moving`);
+    }
     const id = await invoke("start_transfer", { request: { kind, sources, destDir } });
+    const verb = kind === "move" ? "Moving" : fromArchive ? "Extracting" : "Copying";
+    const what = describePaths(sources);
+    this.trackJob(id, { kind, what, destDir, title: `${verb} ${what} to “${this.app.folderLabel(destDir)}”`, ...meta });
+  }
+
+  /** Show a started backend job in the jobs panel. */
+  trackJob(id, meta) {
     const node = el("div", "job", `
       <div class="job-text"><div class="job-title"></div><div class="job-detail">Preparing…</div></div>
       <div class="job-bar"><div class="job-fill"></div></div>
       <button class="tool job-cancel" title="Cancel">×</button>`);
-    const verb = kind === "move" ? "Moving" : "Copying";
-    const what = sources.length === 1 ? `“${basename(sources[0])}”` : plural(sources.length, "item");
-    node.querySelector(".job-title").textContent = `${verb} ${what} to “${this.app.folderLabel(destDir)}”`;
+    node.querySelector(".job-title").textContent = meta.title;
     node.querySelector(".job-cancel").addEventListener("click", () => invoke("cancel_job", { id }));
     this.jobsEl.append(node);
     this.jobsEl.hidden = false;
     // Events can in theory beat the invoke reply; replay anything that arrived early.
-    const job = Object.assign(this.jobFor(id), { el: node, kind, what, destDir, ...meta, speed: 0, last: null });
+    const job = Object.assign(this.jobFor(id), { el: node, ...meta, speed: 0, last: null });
     if (job.pendingProgress) this.renderProgress(job, job.pendingProgress);
     if (job.pendingFinish) this.finishJob(job, job.pendingFinish);
+  }
+
+  // ---------- Archives ----------
+
+  /** The archive a path is inside of, if any (from the pane showing it). */
+  archiveOf(path) {
+    let found = null;
+    this.app.forEachPane((p) => {
+      const a = p.view?.archive;
+      if (a && (path === a || path?.startsWith(`${a}/`))) found = a;
+    });
+    return found;
+  }
+
+  /** Inside an archive nothing can be changed; say so instead of failing. */
+  readOnly(pane = this.pane) {
+    const a = pane.view?.archive;
+    if (a) this.app.flashStatus(`“${basename(a)}” is read-only — extract items to change them`);
+    return !!a;
+  }
+
+  /** "Extract Here" (or into `destDir`) for the selected archives. */
+  async extract(pane = this.pane, destDir = null) {
+    const archives = pane.selectedEntries().filter((e) => e.archive).map((e) => e.path);
+    if (!archives.length) return;
+    const id = await invoke("start_extract", { archives, destDir });
+    const where = destDir ?? pane.path;
+    this.trackJob(id, { kind: "extract", what: describePaths(archives), destDir: where, pane, title: `Extracting ${describePaths(archives)}` });
+  }
+
+  /** Extract selected items of a browsed archive next to the archive. */
+  extractSelectionOut(pane = this.pane) {
+    const items = pane.selectedEntries();
+    const archive = pane.view?.archive;
+    if (!items.length || !archive) return;
+    this.startJob("copy", items.map((e) => e.path), archive.replace(/\/[^/]*$/, "") || "/");
+  }
+
+  async compress(format, pane = this.pane) {
+    if (this.readOnly(pane)) return;
+    const items = pane.selectedEntries();
+    if (!items.length) return;
+    const id = await invoke("start_compress", { sources: items.map((e) => e.path), format });
+    this.trackJob(id, { kind: "compress", what: this.describe(items), destDir: pane.path, pane, title: `Compressing ${this.describe(items)}` });
   }
 
   renderProgress(job, p) {
@@ -253,13 +312,26 @@ export class Ops {
       this.setCutMarks(null, null);
       invoke("clipboard_clear_cut").catch(() => {});
     }
+    const noun = { move: "Move", copy: "Copy", extract: "Extraction", compress: "Compression" }[result.kind] ?? "Job";
     if (result.errors.length) {
       this.pane.showMessage(summarizeErrors(result.errors));
     } else if (result.cancelled) {
-      this.app.flashStatus(`${result.kind === "move" ? "Move" : "Copy"} cancelled`);
+      this.app.flashStatus(`${noun} cancelled`);
     } else if (result.completed) {
-      const done = result.kind === "move" ? "Moved" : "Copied";
-      this.app.flashStatus(`${done} ${job.what} to “${this.app.folderLabel(job.destDir)}” — ${modLabel}Z to undo`);
+      const created = result.created ?? [];
+      const msg = {
+        move: `Moved ${job.what} to “${this.app.folderLabel(job.destDir)}”`,
+        copy: `Copied ${job.what} to “${this.app.folderLabel(job.destDir)}”`,
+        extract: `Extracted ${job.what}`,
+        compress: `Created “${basename(created[0] ?? "")}”`,
+      }[result.kind];
+      this.app.flashStatus(`${msg} — ${modLabel}Z to undo`);
+      // Select what an extraction or compression made, if it's in view.
+      const pane = job.pane;
+      if (pane && created.length && (result.kind === "extract" || result.kind === "compress")) {
+        const name = basename(created[0]);
+        if (created[0].startsWith(`${pane.path}/`)) pane.navigate(pane.path, { mode: "replace", select: name, preserveScroll: true });
+      }
     }
   }
 
@@ -330,6 +402,10 @@ export class Ops {
     }
     return false;
   }
+}
+
+function describePaths(paths) {
+  return paths.length === 1 ? `“${basename(paths[0])}”` : plural(paths.length, "item");
 }
 
 function summarizeErrors(errors) {

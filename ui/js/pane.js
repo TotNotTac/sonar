@@ -316,7 +316,8 @@ export class Pane {
   async openEntry(i) {
     const e = this.items[i];
     if (!e) return;
-    if (this.isFolder(e)) return this.navigate(e.path);
+    // Archives open like folders (read-only); "Open With" is in the context menu.
+    if (this.isFolder(e) || e.archive) return this.navigate(e.path);
     if (e.kind === "brokenSymlink") return this.showMessage(`"${e.name}" is a broken link`);
     this.app.flashStatus(`Opening "${e.name}"…`);
     try {
@@ -603,6 +604,7 @@ export class Pane {
     const right = [];
     if (!this.app.showHidden && v.hiddenCount) right.push(`${v.hiddenCount} hidden`);
     if (v.watchError) right.push("Live updates off");
+    if (v.archive) right.push("Read-only archive");
     return { left, right: right.join(" · "), rightTitle: v.watchError ?? "" };
   }
 

@@ -18,6 +18,8 @@ pub enum UndoAction {
     Trash(Vec<TrashReceipt>),
     /// Items created by a copy.
     Copy(Vec<PathBuf>),
+    /// Items created by another job (extracting, compressing), with its name.
+    Created(&'static str, Vec<PathBuf>),
     /// `(from, to)` pairs of a move.
     Move(Vec<(PathBuf, PathBuf)>),
 }
@@ -29,6 +31,7 @@ impl UndoAction {
             Self::NewFolder(_) => "Create Folder",
             Self::Trash(_) => "Move to Trash",
             Self::Copy(_) => "Copy",
+            Self::Created(label, _) => label,
             Self::Move(_) => "Move",
         }
     }
@@ -52,7 +55,9 @@ impl UndoAction {
                 Err(e) => Err(CoreError::from_io(&path, e)),
             }),
             Self::Trash(receipts) => receipts.iter().rev().for_each(|r| note(platform::restore(r))),
-            Self::Copy(created) => created.iter().for_each(|p| note(platform::trash(p).map(drop))),
+            Self::Copy(created) | Self::Created(_, created) => {
+                created.iter().for_each(|p| note(platform::trash(p).map(drop)))
+            }
             Self::Move(pairs) => pairs.iter().rev().for_each(|(from, to)| note(move_back(to, from))),
         }
         first_err.map_or(Ok(()), Err)

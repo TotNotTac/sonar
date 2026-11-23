@@ -4,6 +4,7 @@
 //! entries, build breadcrumbs and enumerate "places", but nothing about Tauri.
 //! Everything OS-specific lives behind [`platform`].
 
+pub mod archive;
 pub mod breadcrumb;
 pub mod clipboard;
 pub mod entry;

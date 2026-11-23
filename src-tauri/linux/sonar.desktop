@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name={{name}}
+GenericName=File Manager
+Comment=A Dolphin-inspired file manager
+Exec={{exec}} %U
+Icon={{icon}}
+Terminal=false
+StartupWMClass={{exec}}
+StartupNotify=true
+Categories=System;FileTools;FileManager;Utility;
+MimeType=inode/directory;
+Keywords=files;folders;browser;explorer;
