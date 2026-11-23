@@ -71,10 +71,38 @@ struct DragOutEnded {
     dropped: bool,
 }
 
+/// Files dragged over the window from other apps, as `file-drag` events.
+/// Tauri's own `tauri://drag-*` events can't carry names that aren't UTF-8,
+/// so these send the paths encoded (see `sonar_core::uipath`).
+pub const EVENT_FILE_DRAG: &str = "file-drag";
+
+#[derive(Clone, Serialize)]
+struct FileDrag {
+    /// "enter", "over", "drop" or "leave".
+    kind: &'static str,
+    #[serde(with = "uipath::vec")]
+    paths: Vec<std::path::PathBuf>,
+    /// Physical pixels in the window, like Tauri's events.
+    position: Option<tauri::PhysicalPosition<f64>>,
+}
+
+pub fn forward_drag_drop(window: &tauri::Window, event: &tauri::WindowEvent) {
+    use tauri::DragDropEvent as D;
+    let tauri::WindowEvent::DragDrop(event) = event else { return };
+    let drag = match event {
+        D::Enter { paths, position } => FileDrag { kind: "enter", paths: paths.clone(), position: Some(*position) },
+        D::Over { position } => FileDrag { kind: "over", paths: vec![], position: Some(*position) },
+        D::Drop { paths, position } => FileDrag { kind: "drop", paths: paths.clone(), position: Some(*position) },
+        D::Leave => FileDrag { kind: "leave", paths: vec![], position: None },
+        _ => return,
+    };
+    let _ = window.emit(EVENT_FILE_DRAG, drag);
+}
+
 /// Hand an in-progress drag over to the OS so the files can be dropped on
 /// other apps (Finder, Dolphin, mail...). Offers a copy; the receiving app
-/// decides what to do with it. Drops back onto Sonar arrive as Tauri's
-/// regular drag-drop events.
+/// decides what to do with it. Drops back onto Sonar arrive as `file-drag`
+/// events.
 #[tauri::command]
 pub async fn start_drag_out(app: AppHandle, window: WebviewWindow, paths: Vec<UiPath>) -> Result<(), CoreError> {
     let paths = uipath::paths(paths);

@@ -29,9 +29,10 @@ export class Ops {
   beginRename(pane = this.pane, i = pane.selected.has(pane.focus) ? pane.focus : [...pane.selected][0]) {
     if (pane.renaming || i == null || i < 0 || this.readOnly(pane)) return;
     const e = pane.items[i];
+    if (!e) return;
+    pane.setFocus(i); // scrolls it into view, so it's rendered
     const label = pane.viewImpl.label(i);
-    if (!e || !label) return;
-    pane.setFocus(i);
+    if (!label) return;
 
     const input = el("input", "rename-input");
     // Bytes that aren't text show as U+FFFD; typing over them gives a text name.
@@ -40,7 +41,7 @@ export class Ops {
     input.spellcheck = false;
     input.autocomplete = "off";
     label.replaceWith(input);
-    pane.renaming = { path: e.path };
+    pane.renaming = { path: e.path, index: i }; // the view keeps this row rendered
     input.focus();
     // Select the name without its extension, like Dolphin.
     const dot = pane.isFolder(e) ? -1 : original.lastIndexOf(".");

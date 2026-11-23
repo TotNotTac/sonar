@@ -20,6 +20,7 @@ pub fn run() {
         .manage(open::OpenQueue::default())
         .manage(ops::OpsState::default())
         .register_asynchronous_uri_scheme_protocol(protocol::SCHEME, protocol::handle)
+        .on_window_event(native::forward_drag_drop)
         .setup(|app| {
             commands::watch_places(app.handle().clone());
             #[cfg(target_os = "macos")]

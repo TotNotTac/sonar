@@ -158,7 +158,7 @@ fn file_name(p: &Path) -> String {
 fn spawn_error(e: std::io::Error) -> CoreError {
     if e.kind() == std::io::ErrorKind::NotFound {
         CoreError::Other(
-            "Archive support needs bsdtar (libarchive). On Debian/Ubuntu: apt install libarchive-tools".into(),
+            "Archive support needs bsdtar, which comes with libarchive (libarchive-tools on Debian and Ubuntu)".into(),
         )
     } else {
         CoreError::Other(format!("Could not run bsdtar: {e}"))
@@ -204,13 +204,74 @@ fn parse_list_line(line: &str) -> Option<ArchiveEntry> {
         name.truncate(i); // hard links
     }
     let is_dir = mode.starts_with('d') || name.ends_with('/');
-    let path = normalize(&name)?;
+    let path = normalize(&crate::uipath::encode(&unescape_name(&name)))?;
     Some(ArchiveEntry {
         path,
         is_dir,
         size: if is_dir { 0 } else { fields[4].parse().unwrap_or(0) },
         modified: parse_ls_date(fields[5], fields[6], fields[7]),
     })
+}
+
+/// Undo bsdtar's escaping of names in listings: `\\`, C escapes like `\n`,
+/// and `\ooo` octal for bytes that aren't printable (or valid UTF-8).
+fn unescape_name(s: &str) -> std::ffi::OsString {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'\\' && i + 1 < b.len() {
+            let simple = match b[i + 1] {
+                b'\\' => Some(b'\\'),
+                b'a' => Some(7),
+                b'b' => Some(8),
+                b'f' => Some(12),
+                b'n' => Some(b'\n'),
+                b'r' => Some(b'\r'),
+                b't' => Some(b'\t'),
+                b'v' => Some(11),
+                _ => None,
+            };
+            if let Some(c) = simple {
+                out.push(c);
+                i += 2;
+                continue;
+            }
+            let octal = b.get(i + 1..i + 4).filter(|d| d.iter().all(|c| (b'0'..=b'7').contains(c)));
+            if let Some(d) = octal {
+                let v = d.iter().fold(0u32, |v, c| v * 8 + u32::from(c - b'0'));
+                if let Ok(byte) = u8::try_from(v) {
+                    out.push(byte);
+                    i += 4;
+                    continue;
+                }
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        std::ffi::OsString::from_vec(out)
+    }
+    #[cfg(not(unix))]
+    {
+        String::from_utf8_lossy(&out).into_owned().into()
+    }
+}
+
+/// A member path (encoded, see [`crate::uipath`]) as a bsdtar pattern that
+/// matches only itself: wildcards and backslashes in the name are escaped.
+fn literal_pattern(member: &str) -> std::ffi::OsString {
+    let mut escaped = String::with_capacity(member.len());
+    for c in member.chars() {
+        if matches!(c, '\\' | '*' | '?' | '[') {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    crate::uipath::decode(&escaped)
 }
 
 fn normalize(name: &str) -> Option<String> {
@@ -299,14 +360,15 @@ pub fn split_virtual(path: &Path) -> Option<(PathBuf, String)> {
     let mut inner: Vec<String> = Vec::new();
     loop {
         if let Ok(meta) = fs::metadata(archive) {
-            let name = archive.file_name()?.to_string_lossy();
+            let name = crate::uipath::encode(archive.file_name()?);
             if meta.is_file() && is_archive(&name) {
                 inner.reverse();
                 return Some((archive.to_path_buf(), inner.join("/")));
             }
             return None; // an existing non-archive: an ordinary (missing) path
         }
-        inner.push(archive.file_name()?.to_string_lossy().into_owned());
+        // Inner paths are kept encoded, like the names in listings.
+        inner.push(crate::uipath::encode(archive.file_name()?));
         archive = archive.parent()?;
     }
 }
@@ -331,7 +393,8 @@ fn locate(path: &Path) -> Result<Located> {
             let prefix = parts[..i].join("/");
             if is_archive(parts[i - 1]) && entries.iter().any(|e| e.path == prefix && !e.is_dir) {
                 let real = nested_copy(&loc, &prefix)?;
-                loc = Located { real, virt: loc.virt.join(&prefix), inner: parts[i..].join("/") };
+                loc =
+                    Located { real, virt: loc.virt.join(crate::uipath::decode(&prefix)), inner: parts[i..].join("/") };
                 continue 'nested;
             }
         }
@@ -416,7 +479,7 @@ pub fn listing(path: &Path, opts: &crate::ListOptions) -> Result<crate::Listing>
     for e in children(&all, inner) {
         let name = e.path.rsplit('/').next().unwrap_or(&e.path).to_string();
         let kind = if e.is_dir { EntryKind::Directory } else { EntryKind::File };
-        let path = here.join(&name);
+        let path = here.join(crate::uipath::decode(&name));
         let ft = crate::filetype::describe_native(&name, &path, kind);
         let is_hidden = name.starts_with('.');
         if is_hidden && !opts.show_hidden {
@@ -455,7 +518,7 @@ pub fn listing(path: &Path, opts: &crate::ListOptions) -> Result<crate::Listing>
 /// private temporary folder, to open it with its app. Returns the copy.
 pub fn extract_for_opening(path: &Path) -> Result<PathBuf> {
     let (parent, name) = match (path.parent(), path.file_name()) {
-        (Some(p), Some(n)) => (p, n.to_string_lossy().into_owned()),
+        (Some(p), Some(n)) => (p, crate::uipath::encode(n)),
         _ => return Err(CoreError::NotFound(path.to_path_buf())),
     };
     let dest = temp_base("sonar-open")?;
@@ -581,7 +644,7 @@ fn extract_file(
         r
     };
     let mut cmd = bsdtar_reading(virt);
-    cmd.arg("-xvf").arg(archive).arg("-C").arg(&tmp).args(&patterns);
+    cmd.arg("-xvf").arg(archive).arg("-C").arg(&tmp).args(patterns.iter().map(|p| literal_pattern(p)));
     match run_with_progress(cmd, total, cancel, progress) {
         Ok(Some(_)) => {}
         Ok(None) => return cleanup(Ok(None)),
@@ -598,7 +661,7 @@ fn extract_file(
     };
     let result = match select {
         Some((dir, names)) => names.iter().try_for_each(|n| {
-            let src = tmp.join(dir).join(n);
+            let src = tmp.join(crate::uipath::decode(dir)).join(crate::uipath::decode(n));
             if fs::symlink_metadata(&src).is_ok() {
                 place(&src, n)
             } else {
@@ -608,9 +671,9 @@ fn extract_file(
         None => {
             let roots: Vec<_> = fs::read_dir(&tmp).map_err(|e| CoreError::from_io(&tmp, e))?.flatten().collect();
             match roots.as_slice() {
-                [only] => place(&only.path(), &only.file_name().to_string_lossy()),
+                [only] => place(&only.path(), &crate::uipath::encode(&only.file_name())),
                 _ => {
-                    let folder = stem(&file_name(virt)).to_string();
+                    let folder = stem(&crate::uipath::file_name(virt)).to_string();
                     place(&tmp, &folder)
                 }
             }
@@ -866,6 +929,71 @@ mod tests {
             extract_items(&zip.join("photos"), &names, &out, &AtomicBool::new(false), &mut noop()).unwrap().unwrap();
         assert_eq!(got, [out.join("2025"), out.join("readme.txt")]);
         assert_eq!(fs::read(out.join("2025/ü beach.jpg")).unwrap(), b"jpg");
+    }
+
+    #[test]
+    fn unescapes_listed_names() {
+        let e = parse_list_line(r"-rw-r--r--  0 0 0 1 Nov 23 15:06 back\\slash\ttab\nline").unwrap();
+        assert_eq!(e.path, "back\\slash\ttab\nline");
+        assert_eq!(literal_pattern("a\\b*[1]?.jpg"), "a\\\\b\\*\\[1]\\?.jpg");
+        #[cfg(unix)]
+        {
+            let l = parse_list_line(r"-rw-r--r--  0 0 0 1 Nov 23 15:06 dir/caf\351.txt").unwrap();
+            assert_eq!(l.path, "dir/caf\u{10FFE9}.txt", "a byte that isn't UTF-8, encoded");
+        }
+    }
+
+    /// Names that bsdtar escapes in listings or reads as wildcards still list,
+    /// browse and extract exactly.
+    #[cfg(unix)]
+    #[test]
+    fn awkward_member_names() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        if !have_bsdtar() {
+            return;
+        }
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("src");
+        fs::create_dir(&src).unwrap();
+        let names: Vec<std::ffi::OsString> =
+            [&b"caf\xe9.txt"[..], b"back\\slash.txt", b"line\nbreak.txt", b"photo[1].jpg", b"star*.txt"]
+                .iter()
+                .map(|b| std::ffi::OsString::from_vec(b.to_vec()))
+                .collect();
+        for n in &names {
+            fs::write(src.join(n), n.as_bytes()).unwrap();
+        }
+        let tar = d.path().join("odd.tar");
+        let status = Command::new(BSDTAR).arg("-cf").arg(&tar).arg("-C").arg(&src).args(&names).status().unwrap();
+        assert!(status.success());
+
+        let listed = listing(&tar, &crate::ListOptions::default()).unwrap();
+        let mut got: Vec<_> = listed.entries.iter().map(|e| crate::uipath::decode(&e.name)).collect();
+        got.sort();
+        let mut want = names.clone();
+        want.sort();
+        assert_eq!(got, want);
+        // Entry paths continue the archive path with the real bytes.
+        for e in &listed.entries {
+            assert_eq!(e.path, tar.join(crate::uipath::decode(&e.name)));
+        }
+
+        // Each one alone: "photo[1].jpg" must not be taken as a pattern.
+        let out = d.path().join("out");
+        fs::create_dir(&out).unwrap();
+        for e in &listed.entries {
+            let got = extract_items(&tar, std::slice::from_ref(&e.name), &out, &AtomicBool::new(false), &mut noop())
+                .unwrap()
+                .unwrap();
+            assert_eq!(got.len(), 1, "{:?}", e.name);
+        }
+        for n in &names {
+            assert_eq!(fs::read(out.join(n)).unwrap(), n.as_bytes());
+        }
+        assert_eq!(fs::read_dir(&out).unwrap().count(), names.len(), "nothing extra extracted");
+        // Opening one (extract to a temporary folder) works through its virtual path.
+        let opened = extract_for_opening(&tar.join(&names[0])).unwrap();
+        assert_eq!(fs::read(opened).unwrap(), names[0].as_bytes());
     }
 
     #[test]

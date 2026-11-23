@@ -145,6 +145,47 @@ fn volumes_from_mounts(mounts: &str) -> Vec<Place> {
     out
 }
 
+/// Kernel and other virtual filesystems: nothing a file search should walk.
+const VIRTUAL_FS: &[&str] = &[
+    "proc",
+    "sysfs",
+    "devtmpfs",
+    "devpts",
+    "cgroup",
+    "cgroup2",
+    "securityfs",
+    "debugfs",
+    "tracefs",
+    "pstore",
+    "bpf",
+    "mqueue",
+    "hugetlbfs",
+    "configfs",
+    "fusectl",
+    "binfmt_misc",
+    "autofs",
+    "efivarfs",
+    "rpc_pipefs",
+    "nsfs",
+];
+
+/// Mount points a search shouldn't wander into: network shares (slow, and
+/// they hang while the server is gone) and virtual filesystems.
+pub(crate) fn search_skip_mounts() -> Vec<PathBuf> {
+    skip_mounts_in(&fs::read_to_string("/proc/self/mounts").unwrap_or_default())
+}
+
+fn skip_mounts_in(mounts: &str) -> Vec<PathBuf> {
+    mounts
+        .lines()
+        .filter_map(|line| {
+            let mut f = line.split_whitespace();
+            let (_, mnt, fstype) = (f.next()?, f.next()?, f.next()?);
+            (NETWORK_FS.contains(&fstype) || VIRTUAL_FS.contains(&fstype)).then(|| unescape_mount(mnt).into())
+        })
+        .collect()
+}
+
 // ---------- Removable media (udisks2 via its CLI) ----------
 
 /// Attached but unmounted devices (USB sticks, other partitions), from `lsblk`.
@@ -417,7 +458,7 @@ pub fn open_with(paths: &[PathBuf], app: &str) -> Result<()> {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
-            .map_err(|e| fail(e.to_string()))?;
+            .map_err(|e| fail(super::spawn_error(&program.to_string_lossy(), &e)))?;
         std::thread::spawn(move || {
             let mut child = child;
             child.wait() // reap; the app keeps running
@@ -433,7 +474,8 @@ pub fn set_default_app(path: &Path, app: &str) -> Result<()> {
         .map_err(|e| CoreError::Other(format!("Could not make {app} the default for {mime}: {e}")))
 }
 
-/// The user's icon theme: KDE's setting, then GTK's, then sensible defaults.
+/// The user's icon theme: KDE's setting, then GTK's, then sensible defaults,
+/// whichever is installed first.
 fn icon_theme() -> &'static str {
     static THEME: OnceLock<String> = OnceLock::new();
     THEME.get_or_init(|| {
@@ -441,14 +483,44 @@ fn icon_theme() -> &'static str {
             .and_then(|c| fs::read_to_string(c.join("kdeglobals")).ok())
             .and_then(|ini| ini_value(&ini, "Icons", "Theme"));
         let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
-        kde.or_else(freedesktop_icons::default_theme_gtk).unwrap_or_else(|| {
-            if desktop.contains("KDE") {
-                "breeze".into()
-            } else {
-                "Adwaita".into()
-            }
-        })
+        let fallback = if desktop.contains("KDE") { ["breeze", "Adwaita"] } else { ["Adwaita", "breeze"] };
+        let bases = icon_base_dirs();
+        kde.into_iter()
+            .chain(freedesktop_icons::default_theme_gtk())
+            .chain(fallback.map(String::from))
+            .find_map(|name| installed_theme(&name, &bases))
+            .unwrap_or_else(|| "hicolor".into())
     })
+}
+
+/// Where icon themes live (Icon Theme Specification, "Directory Layout").
+fn icon_base_dirs() -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = dirs::home_dir().map(|h| h.join(".icons")).into_iter().collect();
+    out.extend(data_dirs().into_iter().map(|d| d.join("icons")));
+    out
+}
+
+/// The directory name of the installed theme `name` refers to. Settings don't
+/// always use the directory's case (GTK may say "Breeze" for `breeze/`), and
+/// sometimes use the display name from `index.theme`.
+fn installed_theme(name: &str, bases: &[PathBuf]) -> Option<String> {
+    let themes: Vec<(String, PathBuf)> = bases
+        .iter()
+        .filter_map(|b| fs::read_dir(b).ok())
+        .flatten()
+        .flatten()
+        .filter(|d| d.path().join("index.theme").is_file())
+        .map(|d| (d.file_name().to_string_lossy().into_owned(), d.path()))
+        .collect();
+    let exact = themes.iter().find(|(dir, _)| dir == name);
+    let folded = || themes.iter().find(|(dir, _)| dir.eq_ignore_ascii_case(name));
+    let by_label = || {
+        themes.iter().find(|(_, path)| {
+            let index = fs::read_to_string(path.join("index.theme")).unwrap_or_default();
+            ini_value(&index, "Icon Theme", "Name").is_some_and(|n| n.eq_ignore_ascii_case(name))
+        })
+    };
+    exact.or_else(folded).or_else(by_label).map(|(dir, _)| dir.clone())
 }
 
 fn ini_value(ini: &str, section: &str, key: &str) -> Option<String> {
@@ -522,6 +594,26 @@ mod tests {
     }
 
     #[test]
+    fn icon_theme_names_resolve_to_installed_themes() {
+        let d = tempfile::tempdir().unwrap();
+        let theme = |dir: &str, label: &str| {
+            fs::create_dir_all(d.path().join(dir)).unwrap();
+            fs::write(d.path().join(dir).join("index.theme"), format!("[Icon Theme]\nName={label}\n")).unwrap();
+        };
+        theme("breeze", "Breeze");
+        theme("breeze-dark", "Breeze Dark");
+        theme("Papirus", "Papirus");
+        fs::create_dir_all(d.path().join("cursors-only")).unwrap(); // no index.theme: not a theme
+        let bases = [d.path().to_path_buf(), d.path().join("missing")];
+        assert_eq!(installed_theme("breeze", &bases).as_deref(), Some("breeze"));
+        assert_eq!(installed_theme("Breeze", &bases).as_deref(), Some("breeze"), "case from GTK settings");
+        assert_eq!(installed_theme("Breeze Dark", &bases).as_deref(), Some("breeze-dark"), "display name");
+        assert_eq!(installed_theme("papirus", &bases).as_deref(), Some("Papirus"));
+        assert_eq!(installed_theme("cursors-only", &bases), None);
+        assert_eq!(installed_theme("Nope", &bases), None);
+    }
+
+    #[test]
     fn mount_table() {
         let table = "\
 /dev/nvme0n1p2 / ext4 rw,relatime 0 0
@@ -545,6 +637,10 @@ me@host:/srv /home/me/srv fuse.sshfs rw 0 0
                 ("nas", "network", PlaceSection::Remote),
                 ("srv", "network", PlaceSection::Remote),
             ]
+        );
+        assert_eq!(
+            skip_mounts_in(table),
+            [PathBuf::from("/proc"), PathBuf::from("/home/me/nas"), PathBuf::from("/home/me/srv")]
         );
     }
 

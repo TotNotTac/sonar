@@ -28,11 +28,11 @@ mod generic;
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 use generic as imp;
 
-pub(crate) use imp::clone_file;
 pub use imp::{
     apps_for, eject_volume, icon, mount_device, mounted_volumes, native_type, open_path, open_with, restore,
     set_default_app, trash, trash_dir, unmounted_volumes, HiddenRules, TrashReceipt,
 };
+pub(crate) use imp::{clone_file, search_skip_mounts};
 
 use std::fs;
 use std::io::{self, Read};
@@ -176,15 +176,31 @@ fn host_env(vars: &[(String, String)]) -> Vec<(String, Option<String>)> {
     out
 }
 
+/// Why `program` couldn't be started, in words for the user: a missing tool
+/// names the package that has it.
+pub(crate) fn spawn_error(program: &str, e: &io::Error) -> String {
+    if e.kind() != io::ErrorKind::NotFound {
+        return format!("could not run {program}: {e}");
+    }
+    let package = match program {
+        "xdg-open" | "xdg-mime" => Some("xdg-utils"),
+        "udisksctl" => Some("udisks2"),
+        "lsblk" => Some("util-linux"),
+        "fusermount" | "fusermount3" => Some("fuse3"),
+        "bsdtar" => Some("libarchive"),
+        _ => None,
+    };
+    match package {
+        Some(p) => format!("{program} is not installed (it comes with the {p} package)"),
+        None => format!("{program} is not installed"),
+    }
+}
+
 /// Run a helper tool (`udisksctl`, `diskutil`, ...) and return its stdout,
 /// or a readable error built from its stderr.
 #[allow(dead_code)] // unused on the generic backend
 pub(crate) fn run_tool(program: &str, args: &[&str]) -> std::result::Result<String, String> {
-    let out = host_command(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("could not run {program}: {e}"))?;
+    let out = host_command(program).args(args).stdin(Stdio::null()).output().map_err(|e| spawn_error(program, &e))?;
     if out.status.success() {
         return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
     }
@@ -261,7 +277,7 @@ pub(crate) fn run_launcher(program: &str, path: &Path) -> Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| open_err(format!("could not run {program}: {e}")))?;
+        .map_err(|e| open_err(spawn_error(program, &e)))?;
 
     let deadline = Instant::now() + GRACE;
     loop {
@@ -296,6 +312,18 @@ mod tests {
 
     fn vars(list: &[(&str, &str)]) -> Vec<(String, String)> {
         list.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn missing_tools_name_their_package() {
+        let gone = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert_eq!(
+            super::spawn_error("udisksctl", &gone),
+            "udisksctl is not installed (it comes with the udisks2 package)"
+        );
+        assert_eq!(super::spawn_error("okular", &gone), "okular is not installed");
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert!(super::spawn_error("x", &denied).starts_with("could not run x: "));
     }
 
     #[test]

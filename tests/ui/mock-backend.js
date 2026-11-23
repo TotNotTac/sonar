@@ -308,7 +308,10 @@
       placesChanged();
     },
     home_dir: () => HOME,
-    open_dir: ({ pane, path, options = {} }) => {
+    open_dir: async ({ pane, path, options = {} }) => {
+      // A folder that answers late (or never: a disconnected network share).
+      const hang = window.__mock.slow.get(path);
+      if (hang) await new Promise((resolve) => (hang === Infinity ? null : setTimeout(resolve, hang)));
       const virt = splitVirtual(path);
       if (virt) {
         const [archive, inner] = virt;
@@ -564,6 +567,7 @@
   window.__mock = {
     HOME, TRASH, fs, calls, emit, watching, undoStack, mkdir, write, touched,
     denied: new Set(),
+    slow: new Map(), // path -> ms before open_dir answers (Infinity: never)
     clipboard: null,
     opened: [],
     archiveEntries: (p) => archives.get(p),
@@ -587,14 +591,14 @@
       placesChanged();
     },
     dragOuts: [],
-    /** Simulate Tauri's native drag-drop events for files dragged in from another app. */
+    /** Simulate the backend's file-drag events for files dragged in from another app. */
     dropFiles(paths, x, y, { leaveFirst = false } = {}) {
       const dpr = window.devicePixelRatio;
       const position = { x: x * dpr, y: y * dpr };
-      emit("tauri://drag-enter", { paths, position });
-      emit("tauri://drag-over", { position });
-      if (leaveFirst) return emit("tauri://drag-leave", null);
-      emit("tauri://drag-drop", { paths, position });
+      emit("file-drag", { kind: "enter", paths, position });
+      emit("file-drag", { kind: "over", paths: [], position });
+      if (leaveFirst) return emit("file-drag", { kind: "leave", paths: [], position: null });
+      emit("file-drag", { kind: "drop", paths, position });
     },
     countDelay: 30,
     windowCloses: 0,

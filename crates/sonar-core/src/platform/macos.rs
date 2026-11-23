@@ -197,6 +197,12 @@ fn diskutil_says_ejectable(info: &plist::Dictionary) -> bool {
 }
 
 /// macOS mounts attached volumes automatically, so there is nothing to list.
+/// Mount points a search shouldn't wander into. Network volumes live under
+/// /Volumes, which a search in the home folder doesn't reach.
+pub(crate) fn search_skip_mounts() -> Vec<PathBuf> {
+    Vec::new()
+}
+
 pub fn unmounted_volumes() -> Vec<Place> {
     Vec::new()
 }

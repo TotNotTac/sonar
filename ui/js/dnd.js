@@ -198,23 +198,28 @@ export class DragDrop {
       const { x, y } = css(pos);
       this.hover(this.targetAt(x, y, this.external));
     };
-    listen("tauri://drag-enter", ({ payload }) => {
-      this.external = payload.paths ?? [];
-      over(payload.position);
-    });
-    listen("tauri://drag-over", ({ payload }) => over(payload.position));
-    listen("tauri://drag-leave", () => {
-      this.external = null;
-      this.hover(null);
-    });
-    listen("tauri://drag-drop", ({ payload }) => {
-      const paths = payload.paths?.length ? payload.paths : this.external ?? [];
-      this.external = null;
-      this.hover(null);
-      if (!paths.length || !payload.position) return;
-      const { x, y } = css(payload.position);
-      const target = this.targetAt(x, y, paths);
-      if (target?.path) this.drop(paths, target.path, {}, x, y);
+    // Sent by the backend (not Tauri's tauri://drag-* events) so names that
+    // aren't UTF-8 arrive intact.
+    listen("file-drag", ({ payload }) => {
+      switch (payload.kind) {
+        case "enter":
+          this.external = payload.paths ?? [];
+          return over(payload.position);
+        case "over":
+          return over(payload.position);
+        case "leave":
+          this.external = null;
+          return this.hover(null);
+        case "drop": {
+          const paths = payload.paths?.length ? payload.paths : this.external ?? [];
+          this.external = null;
+          this.hover(null);
+          if (!paths.length || !payload.position) return;
+          const { x, y } = css(payload.position);
+          const target = this.targetAt(x, y, paths);
+          if (target?.path) this.drop(paths, target.path, {}, x, y);
+        }
+      }
     });
   }
 }

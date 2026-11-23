@@ -109,6 +109,6 @@ test("loaded OS icons and thumbnails stay inside their icon box", async ({ page 
     const pane = window.sonar.pane;
     for (const img of pane.scroller.querySelectorAll("img.os-icon")) img.src = document.querySelector("canvas")?.toDataURL() ?? img.src;
   });
-  const row = await activePane(page).locator("tbody tr").first().boundingBox();
+  const row = await activePane(page).locator("tbody tr[data-i]").first().boundingBox();
   expect(row.height).toBeLessThan(30);
 });

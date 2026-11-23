@@ -76,6 +76,12 @@ pub fn set_default_app(_path: &Path, _app: &str) -> Result<()> {
     Err(CoreError::Other("Not supported on this platform".into()))
 }
 
+/// Mount points a search shouldn't wander into. Network volumes live under
+/// /Volumes, which a search in the home folder doesn't reach.
+pub(crate) fn search_skip_mounts() -> Vec<PathBuf> {
+    Vec::new()
+}
+
 pub fn unmounted_volumes() -> Vec<Place> {
     Vec::new()
 }

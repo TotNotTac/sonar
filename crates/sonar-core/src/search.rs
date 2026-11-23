@@ -145,6 +145,10 @@ pub fn search(
     let mut summary = SearchSummary::default();
     let Some(mut matcher) = Matcher::new(query) else { return summary };
     let mut queue: VecDeque<PathBuf> = VecDeque::from([root.to_path_buf()]);
+    // Network shares and virtual filesystems below the root are left out
+    // (searching inside one still works: its own mount point isn't skipped).
+    let skip: std::collections::HashSet<PathBuf> =
+        crate::platform::search_skip_mounts().into_iter().filter(|m| !root.starts_with(m)).collect();
     let mut batch = Vec::new();
     let mut last_flush = Instant::now();
 
@@ -174,7 +178,7 @@ pub fn search(
             if hidden && !show_hidden {
                 continue;
             }
-            if ft.is_dir() {
+            if ft.is_dir() && !skip.contains(&path) {
                 queue.push_back(path); // symlinks report !is_dir() here: not followed
             }
             if let Some(score) = score {

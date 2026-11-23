@@ -188,7 +188,6 @@ export class Pane {
     const base = toggle || ev.shiftKey ? new Set(this.selected) : new Set();
     let pointer = { x: ev.clientX, y: ev.clientY };
     let band = null;
-    let rects = null;
 
     const update = () => {
       const p = toContent(pointer.x, pointer.y);
@@ -196,12 +195,6 @@ export class Pane {
         if (Math.hypot(p.x - origin.x, p.y - origin.y) < 5) return;
         band = el("div", "rubberband");
         scroller.append(band);
-        // Item positions in scroll-content coordinates, measured once.
-        rects = this.items.map((_, i) => {
-          const r = this.viewImpl.item(i).getBoundingClientRect();
-          const a = toContent(r.left, r.top);
-          return { left: a.x, top: a.y, right: a.x + r.width, bottom: a.y + r.height };
-        });
       }
       const r = {
         left: Math.min(origin.x, p.x), top: Math.min(origin.y, p.y),
@@ -212,13 +205,12 @@ export class Pane {
       });
       const selected = new Set(base);
       let last = -1;
-      rects.forEach((q, i) => {
-        if (q.left < r.right && q.right > r.left && q.top < r.bottom && q.bottom > r.top) {
-          if (toggle && base.has(i)) selected.delete(i);
-          else selected.add(i);
-          last = i;
-        }
-      });
+      // Computed from the layout, so items that aren't rendered count too.
+      for (const i of this.viewImpl.indicesIn(r)) {
+        if (toggle && base.has(i)) selected.delete(i);
+        else selected.add(i);
+        last = i;
+      }
       this.selected = selected;
       if (last >= 0) this.focus = last;
       this.renderSelection();
@@ -273,12 +265,23 @@ export class Pane {
     const previous = this.path;
     const props = path === previous ? this.props : viewPropsFor(path);
     let view;
+    // A slow folder (a network share, a disk spinning up) says so; one that
+    // doesn't answer at all (a server that's gone) gets a hint. Going
+    // elsewhere meanwhile works: a newer navigation wins.
+    const slow = setTimeout(() => {
+      if (id === this.requestId && path !== previous) this.app.flashStatus(`Loading “${this.app.folderLabel(path)}”…`);
+    }, 500);
+    const stuck = setTimeout(() => {
+      if (id === this.requestId) {
+        this.showMessage(`“${this.app.folderLabel(path)}” is not responding. It may be on a network drive that is disconnected.`);
+      }
+    }, 5000);
     try {
       view = await invoke("open_dir", {
         pane: this.id,
         path,
         options: { showHidden: this.app.showHidden, sort: props.sort },
-      });
+      }).finally(() => { clearTimeout(slow); clearTimeout(stuck); });
     } catch (err) {
       if (id !== this.requestId || this.closed) return false;
       // A nested archive inside an encrypted one: ask, then try again.
@@ -316,9 +319,9 @@ export class Pane {
     this.props = props;
     if (remount) this.mountView();
     this.computeItems();
+    if (preserveScroll) this.scroller.scrollTop = scrollTop;
     this.render();
     this.restoreSelection(keep, selectName, preserveScroll);
-    if (preserveScroll) this.scroller.scrollTop = scrollTop;
     this.app.paneChanged(this);
     return true;
   }
@@ -642,7 +645,7 @@ export class Pane {
   }
 
   markCut() {
-    this.items.forEach((e, i) => this.viewImpl.item(i)?.classList.toggle("cut", this.isCut(e)));
+    for (const [i, node] of this.viewImpl.rendered()) node.classList.toggle("cut", this.isCut(this.items[i]));
   }
 
   // ---------- Selection ----------
@@ -655,10 +658,12 @@ export class Pane {
     return new Set(this.selectedEntries().map((e) => e.name));
   }
 
+  /** Selection classes on the rendered items (views set them on new ones as they render). */
   renderSelection() {
-    for (const n of this.scroller.querySelectorAll(".selected, .focused")) n.classList.remove("selected", "focused");
-    for (const i of this.selected) this.viewImpl.item(i)?.classList.add("selected");
-    this.viewImpl.item(this.focus)?.classList.add("focused");
+    for (const [i, node] of this.viewImpl.rendered()) {
+      node.classList.toggle("selected", this.selected.has(i));
+      node.classList.toggle("focused", i === this.focus);
+    }
     this.app.paneChanged(this, { statusOnly: true });
   }
 
@@ -690,8 +695,8 @@ export class Pane {
       this.anchor = i;
     }
     this.focus = i;
+    this.viewImpl.reveal(i);
     this.renderSelection();
-    this.viewImpl.item(i)?.scrollIntoView({ block: "nearest" });
   }
 
   restoreSelection(names, single, keepScroll) {
@@ -704,10 +709,14 @@ export class Pane {
       const i = this.byName.get(single);
       if (i != null) { this.selected.add(i); this.focus = this.anchor = i; }
     }
+    if (!keepScroll) {
+      if (this.focus >= 0) this.viewImpl.reveal(this.focus, "center");
+      else this.scroller.scrollTop = 0;
+    } else if (single != null && this.focus >= 0) {
+      // A requested item (a renamed file in its new place): scroll only as far as needed.
+      this.viewImpl.reveal(this.focus);
+    }
     this.renderSelection();
-    if (keepScroll) return;
-    if (this.focus >= 0) this.viewImpl.item(this.focus)?.scrollIntoView({ block: "center" });
-    else this.scroller.scrollTop = 0;
   }
 
   // ---------- Keyboard (view navigation; app handles global shortcuts) ----------
@@ -725,7 +734,7 @@ export class Pane {
       if ((t < 0 || t >= n) && cols > 1 && Math.abs(delta) === cols) return;
       this.setFocus(t, { extend });
     };
-    const page = () => this.viewImpl.rowsPerPage(this.scroller.clientHeight);
+    const page = () => this.viewImpl.rowsPerPage();
 
     switch (ev.key) {
       case "ArrowDown":

@@ -25,8 +25,9 @@ pub fn validate_name(name: &str) -> Result<()> {
 }
 
 /// `dir/name` if nothing is there, otherwise the next free "Keep both" name.
+/// `name` may be [`crate::uipath`]-encoded.
 pub fn available_name(dir: &Path, name: &str, is_dir: bool) -> PathBuf {
-    let p = dir.join(name);
+    let p = dir.join(crate::uipath::decode(name));
     if exists(&p) {
         keep_both_name(dir, name, is_dir)
     } else {

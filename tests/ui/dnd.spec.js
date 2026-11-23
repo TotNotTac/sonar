@@ -140,6 +140,17 @@ test("files dropped from another app", async ({ page }) => {
   await expect(page.locator(".drop-target")).toHaveCount(0);
 });
 
+test("files dropped from other apps keep names that aren't UTF-8", async ({ page }) => {
+  const pane = activePane(page);
+  const raw = "/tmp/caf\u{10FFE9}.pdf"; // encoded by the backend's file-drag event
+  await mock(page, (p) => window.__mock.write(p, 10), raw);
+  const target = await center(item(pane, "Documents"));
+  await mock(page, ({ x, y, raw }) => window.__mock.dropFiles([raw], x, y), { ...target, raw });
+  await page.locator(".menu-item", { hasText: "Copy Here" }).click();
+  await expect.poll(() => exists(page, `${HOME}/Documents/caf\u{10FFE9}.pdf`)).toBe(true);
+  await expect(status(page)).toContainText("Copied “caf\uFFFD.pdf” to “Documents”");
+});
+
 test("pressing on a name drags; it never starts a rubber band", async ({ page }) => {
   const pane = activePane(page);
   await drag(page, label(pane, "Music"), item(pane, "Videos"), { release: false });
