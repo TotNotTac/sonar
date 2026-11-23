@@ -142,23 +142,58 @@ export class Ops {
     }
   }
 
-  // ---------- Clipboard (internal to Sonar for now) ----------
+  // ---------- System clipboard ----------
+  //
+  // Files go on the OS clipboard, so they can be pasted into Finder/Dolphin
+  // and files copied there can be pasted here. `app.clipboard` mirrors it
+  // only to dim cut items.
 
   setClipboard(mode, pane = this.pane) {
     const items = pane.selectedEntries();
     if (!items.length) return;
-    this.app.clipboard = { mode, paths: new Set(items.map((e) => e.path)) };
-    this.app.forEachPane((p) => p.markCut());
+    const paths = items.map((e) => e.path);
+    this.setCutMarks(mode, paths);
     const what = this.describe(items);
-    this.app.flashStatus(mode === "cut" ? `Cut ${what} — paste to move` : `Copied ${what} — paste to duplicate`);
+    invoke("clipboard_write_files", { clip: { mode, paths } })
+      .then(() => this.app.flashStatus(mode === "cut" ? `Cut ${what} — paste to move` : `Copied ${what} — paste to duplicate`))
+      .catch((err) => pane.showMessage(errMsg(err)));
   }
 
-  canPaste() { return !!this.app.clipboard?.paths.size; }
+  setCutMarks(mode, paths) {
+    this.app.clipboard = paths?.length ? { mode, paths: new Set(paths) } : null;
+    this.app.forEachPane((p) => p.markCut());
+  }
 
-  paste(destDir = this.pane.path) {
-    const clip = this.app.clipboard;
-    if (!clip || !destDir) return;
-    this.startJob(clip.mode === "cut" ? "move" : "copy", [...clip.paths], destDir, { fromCut: clip.mode === "cut" });
+  /** Files on the system clipboard (from Sonar or any other app), or null. */
+  readClipboard() {
+    return invoke("clipboard_read_files").catch(() => null);
+  }
+
+  /** Re-read the clipboard (e.g. when the window regains focus) to refresh cut marks. */
+  async syncClipboard() {
+    const clip = await this.readClipboard();
+    this.setCutMarks(clip?.mode, clip?.paths);
+  }
+
+  /** Paste into `destDir`. `move` forces a move (⌘⌥V on macOS, like Finder). */
+  async paste(destDir = this.pane.path, { move = false } = {}) {
+    if (!destDir) return;
+    const clip = await this.readClipboard();
+    if (!clip?.paths?.length) {
+      this.app.flashStatus("The clipboard has no files to paste");
+      return;
+    }
+    const kind = move || clip.mode === "cut" ? "move" : "copy";
+    this.startJob(kind, clip.paths, destDir, { fromCut: kind === "move" });
+  }
+
+  /** Put the selected items' paths (or the folder's) on the clipboard as text. */
+  copyLocation(pane = this.pane) {
+    const items = pane.selectedEntries();
+    const paths = items.length ? items.map((e) => e.path) : [pane.path];
+    invoke("clipboard_write_text", { text: paths.join("\n") })
+      .then(() => this.app.flashStatus(paths.length === 1 ? `Copied “${paths[0]}”` : `Copied ${paths.length} locations`))
+      .catch((err) => pane.showMessage(errMsg(err)));
   }
 
   // ---------- Jobs ----------
@@ -214,8 +249,9 @@ export class Ops {
     this.jobsEl.hidden = this.jobs.size === 0;
 
     if (job.fromCut && !result.cancelled && !result.errors.length) {
-      this.app.clipboard = null; // a completed cut-paste empties the clipboard
-      this.app.forEachPane((p) => p.markCut());
+      // A completed cut-paste empties the clipboard: the sources are gone.
+      this.setCutMarks(null, null);
+      invoke("clipboard_clear_cut").catch(() => {});
     }
     if (result.errors.length) {
       this.pane.showMessage(summarizeErrors(result.errors));
@@ -283,6 +319,9 @@ export class Ops {
     if ((k === "Delete" && !ev.shiftKey) || (isMac && ev.metaKey && k === "Backspace"))
       return run(() => this.removeSelected());
 
+    // ev.code, not ev.key: with ⌥ held, macOS reports e.g. "√" for V.
+    if (isMac && ev.metaKey && ev.altKey && ev.code === "KeyV") return run(() => this.paste(this.pane.path, { move: true }));
+    if (mod && ev.altKey && ev.code === "KeyC") return run(() => this.copyLocation());
     if (mod && !ev.shiftKey && !ev.altKey) {
       if (lower === "c") return run(() => this.setClipboard("copy"));
       if (lower === "x") return run(() => this.setClipboard("cut"));

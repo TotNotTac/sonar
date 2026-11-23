@@ -2,7 +2,8 @@
 
 A file manager inspired by KDE Dolphin, built with Tauri 2 and Rust. Targets macOS and Arch Linux.
 
-**Status:** browsing, live updates, opening files, and file operations (rename, new folder, trash, delete, copy/cut/paste with progress and conflict handling, undo). Clipboard is internal to Sonar for now.
+**Status:** browsing, live updates, opening files, and file operations (rename, new folder, trash, delete, copy/cut/paste with progress and conflict handling, undo), drag and drop (within Sonar and with other apps),
+the system clipboard, tabs, split view and rubber-band selection.
 
 ## Layout
 
@@ -14,6 +15,7 @@ crates/sonar-core/      UI-agnostic filesystem model (no Tauri dependency)
   src/breadcrumb.rs     path to clickable segments (paths under $HOME start with "Home")
   src/places.rs         sidebar: standard user dirs from the `dirs` crate, trash, volumes
   src/paths.rs          resolve typed locations (~, relative, file://)
+  src/clipboard.rs      file-list formats: file:// URIs, uri-list, GNOME/KDE cut markers
   src/filetype.rs       extension-based type labels and icon hints
   src/watch.rs          debounced folder watcher (FSEvents / inotify via `notify`)
   src/ops/              file operations
@@ -27,12 +29,14 @@ crates/sonar-core/      UI-agnostic filesystem model (no Tauri dependency)
     generic.rs          fallback so the crate still builds on other platforms
 src-tauri/              Tauri shell: thin #[tauri::command] wrappers over sonar-core, plus per-view
                         state (current watcher, background item-count job)
+  src/native/           UI-thread platform code: system clipboard (NSPasteboard / GTK), drag-out
 ui/                     static frontend, native ES modules (no bundler)
   js/app.js             window: tabs, split view, toolbar, location bar, sidebar, keyboard routing
   js/pane.js            one folder view: navigation, history, selection, filter, live updates
   js/views.js           details and icons renderers
   js/ops.js             file operations, jobs panel, conflict dialog, undo
   js/menu.js            HTML context menus (+ contextmenus.js for their contents)
+  js/dnd.js             drag and drop: in-window, out to other apps, and drops from them
   js/store.js           settings, per-folder view properties
 ```
 
@@ -86,7 +90,17 @@ Arch Linux.
 | Move to Trash | Delete | ⌘⌫, Delete |
 | Delete permanently (asks first) | Shift+Delete | ⌘⌥⌫ |
 | Copy / Cut / Paste | Ctrl+C / X / V | ⌘C / X / V |
+| Paste as move (Finder style) | — | ⌘⌥V |
+| Copy location (path as text) | Ctrl+Alt+C | ⌘⌥C |
 | Undo | Ctrl+Z | ⌘Z |
+
+Copy and cut use the system clipboard, so files move freely between Sonar and Finder, Dolphin, Nautilus and
+other apps (Linux: `text/uri-list`, `x-special/gnome-copied-files`, `application/x-kde-cutselection`).
+
+Drag items onto folders, a pane's empty space, places, breadcrumbs or tabs (hover a tab to switch to it).
+Dropping asks Move Here / Copy Here; hold Shift to move or Ctrl (⌥ on macOS) to copy without asking. Drag
+out of the window to drop files on other apps; files dragged in from other apps drop the same way. Drag on
+empty space, or on a row outside its name, to rubber-band select (Ctrl/⌘ toggles, Shift adds).
 
 Deleting inside the Trash always deletes permanently. Copies and moves run in the background with a progress
 panel; name clashes ask Skip / Keep Both / Replace (or Merge for folders), optionally for all remaining conflicts.

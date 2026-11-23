@@ -10,6 +10,8 @@ const keys = {
   undo: shortcut("mod+Z"),
   trash: isMac ? shortcut("mod+Backspace") : "Delete",
   deletePermanently: isMac ? shortcut("mod+alt+Backspace") : "Shift+Delete",
+  copyLocation: shortcut("mod+alt+C"),
+  pasteMove: shortcut("mod+alt+V"),
   hidden: isMac ? shortcut("mod+shift+.") : "Ctrl+H",
   filter: isMac ? shortcut("mod+F") : "Ctrl+I",
   icons: shortcut("mod+1"),
@@ -20,10 +22,11 @@ const keys = {
 };
 export { keys as shortcuts };
 
-export function itemsMenu(app, pane) {
+/** `info`: `{ undoLabel, canPaste }`, looked up before the menu opens. */
+export function itemsMenu(app, pane, info = {}) {
   const { ops } = app;
   const sel = pane.selectedEntries();
-  if (!sel.length) return backgroundMenu(app, pane);
+  if (!sel.length) return backgroundMenu(app, pane, info);
   const one = sel.length === 1 ? sel[0] : null;
   const folder = one && pane.isFolder(one) ? one : null;
   const inTrash = ops.inTrash(pane);
@@ -34,7 +37,8 @@ export function itemsMenu(app, pane) {
     "-",
     { label: "Cut", shortcut: keys.cut, action: () => ops.setClipboard("cut", pane) },
     { label: "Copy", shortcut: keys.copy, action: () => ops.setClipboard("copy", pane) },
-    folder && { label: "Paste Into Folder", disabled: !ops.canPaste(), action: () => ops.paste(folder.path) },
+    folder && { label: "Paste Into Folder", disabled: !info.canPaste, action: () => ops.paste(folder.path) },
+    { label: "Copy Location", shortcut: keys.copyLocation, action: () => ops.copyLocation(pane) },
     "-",
     { label: "Rename…", shortcut: "F2", disabled: !one, action: () => ops.beginRename(pane) },
     inTrash
@@ -49,7 +53,7 @@ export function itemsMenu(app, pane) {
   ];
 }
 
-export function backgroundMenu(app, pane, undoLabel = null) {
+export function backgroundMenu(app, pane, { undoLabel = null, canPaste = false } = {}) {
   const { ops } = app;
   const { viewMode, sort } = pane.props;
   const sortBy = (key) => ({
@@ -61,7 +65,8 @@ export function backgroundMenu(app, pane, undoLabel = null) {
   const split = app.activeTab.panes.length === 2;
   return [
     { label: "New Folder…", shortcut: keys.newFolder, action: () => ops.newFolder(pane) },
-    { label: "Paste", shortcut: keys.paste, disabled: !ops.canPaste(), action: () => ops.paste(pane.path) },
+    { label: "Paste", shortcut: keys.paste, disabled: !canPaste, action: () => ops.paste(pane.path) },
+    isMac && canPaste && { label: "Move Here", shortcut: keys.pasteMove, action: () => ops.paste(pane.path, { move: true }) },
     { label: undoLabel ? `Undo ${undoLabel}` : "Undo", shortcut: keys.undo, disabled: !undoLabel, action: () => ops.undo() },
     "-",
     {
@@ -78,6 +83,7 @@ export function backgroundMenu(app, pane, undoLabel = null) {
     },
     { label: "Show Hidden Files", shortcut: keys.hidden, checked: app.showHidden, action: () => app.toggleHidden() },
     "-",
+    { label: "Copy Location", shortcut: keys.copyLocation, action: () => ops.copyLocation(pane) },
     { label: "Filter…", shortcut: keys.filter, action: () => pane.showFilter() },
     { label: "Open in New Tab", shortcut: keys.newTab, action: () => app.newTab(pane.path) },
     { label: split ? "Close Split View" : "Split View", shortcut: "F3", action: () => app.toggleSplit() },

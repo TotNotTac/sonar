@@ -5,6 +5,7 @@
 //! Everything OS-specific lives behind [`platform`].
 
 pub mod breadcrumb;
+pub mod clipboard;
 pub mod entry;
 pub mod error;
 pub mod filetype;

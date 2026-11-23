@@ -61,6 +61,7 @@ export class Pane {
     this.header.addEventListener("click", () => this.scroller.focus());
 
     this.scroller.addEventListener("mousedown", (ev) => this.onMouseDown(ev));
+    window.addEventListener("mouseup", () => this.onMouseUp());
     this.scroller.addEventListener("dblclick", (ev) => {
       const i = this.indexAt(ev.target);
       if (i != null) this.openEntry(i);
@@ -107,15 +108,117 @@ export class Pane {
     return node ? Number(node.dataset.i) : null;
   }
 
+  /**
+   * Press on an item's icon or name (any part of a tile in icons view): select
+   * it, and maybe start dragging it. Press anywhere else (empty space, or a
+   * row outside its name): select the row, and maybe draw a rubber band.
+   */
   onMouseDown(ev) {
-    if (ev.target.closest(".rename-input") || ev.target.closest("thead")) return;
+    if (ev.button !== 0 || ev.target.closest(".rename-input") || ev.target.closest("thead")) return;
     const i = this.indexAt(ev.target);
-    if (i == null) {
-      if (ev.button === 0) this.clearSelection();
+    const mod = isMod(ev);
+    const onHandle = i != null && (this.props.viewMode === "icons" || ev.target.closest(".ficon, .name-label"));
+    if (onHandle) {
+      // Keep an existing multi-selection so it can be dragged as a whole;
+      // a plain click (no drag) collapses it on release.
+      if (this.selected.has(i) && !mod && !ev.shiftKey) {
+        this.pendingCollapse = i;
+        this.focus = i;
+        this.renderSelection();
+      } else {
+        this.setFocus(i, { extend: ev.shiftKey, toggle: mod });
+      }
+      this.app.dnd.press(ev, this);
       return;
     }
-    if (ev.button !== 0) return;
-    this.setFocus(i, { extend: ev.shiftKey, toggle: isMod(ev) });
+    if (mod || ev.shiftKey) {
+      // With modifiers the band combines with the selection as it was before
+      // this press, so the click itself only applies if no band gets drawn.
+      this.startRubberBand(ev, () => { if (i != null) this.setFocus(i, { extend: ev.shiftKey, toggle: mod }); });
+      return;
+    }
+    if (i != null) this.setFocus(i);
+    else this.clearSelection();
+    this.startRubberBand(ev);
+  }
+
+  onMouseUp() {
+    if (this.pendingCollapse == null) return;
+    const i = this.pendingCollapse;
+    this.pendingCollapse = null;
+    this.setFocus(i);
+  }
+
+  /** Drag a selection rectangle; Ctrl/⌘ toggles against, Shift adds to, the existing selection. */
+  startRubberBand(ev, onClick = null) {
+    const scroller = this.scroller;
+    const box = scroller.getBoundingClientRect();
+    const toContent = (x, y) => ({ x: x - box.left + scroller.scrollLeft, y: y - box.top + scroller.scrollTop });
+    const origin = toContent(ev.clientX, ev.clientY);
+    const toggle = isMod(ev);
+    const base = toggle || ev.shiftKey ? new Set(this.selected) : new Set();
+    let pointer = { x: ev.clientX, y: ev.clientY };
+    let band = null;
+    let rects = null;
+
+    const update = () => {
+      const p = toContent(pointer.x, pointer.y);
+      if (!band) {
+        if (Math.hypot(p.x - origin.x, p.y - origin.y) < 5) return;
+        band = el("div", "rubberband");
+        scroller.append(band);
+        // Item positions in scroll-content coordinates, measured once.
+        rects = this.items.map((_, i) => {
+          const r = this.viewImpl.item(i).getBoundingClientRect();
+          const a = toContent(r.left, r.top);
+          return { left: a.x, top: a.y, right: a.x + r.width, bottom: a.y + r.height };
+        });
+      }
+      const r = {
+        left: Math.min(origin.x, p.x), top: Math.min(origin.y, p.y),
+        right: Math.max(origin.x, p.x), bottom: Math.max(origin.y, p.y),
+      };
+      Object.assign(band.style, {
+        left: `${r.left}px`, top: `${r.top}px`, width: `${r.right - r.left}px`, height: `${r.bottom - r.top}px`,
+      });
+      const selected = new Set(base);
+      let last = -1;
+      rects.forEach((q, i) => {
+        if (q.left < r.right && q.right > r.left && q.top < r.bottom && q.bottom > r.top) {
+          if (toggle && base.has(i)) selected.delete(i);
+          else selected.add(i);
+          last = i;
+        }
+      });
+      this.selected = selected;
+      if (last >= 0) this.focus = last;
+      this.renderSelection();
+    };
+    // Keep scrolling while the pointer is held past the top or bottom edge.
+    const timer = setInterval(() => {
+      if (!band) return;
+      if (pointer.y < box.top + 16) scroller.scrollTop -= 16;
+      else if (pointer.y > box.bottom - 16) scroller.scrollTop += 16;
+      else return;
+      update();
+    }, 40);
+    const move = (e) => {
+      pointer = { x: e.clientX, y: e.clientY };
+      update();
+    };
+    const up = () => {
+      clearInterval(timer);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      if (band) {
+        band.remove();
+        this.anchor = this.focus;
+      } else {
+        onClick?.();
+      }
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
   }
 
   // ---------- Navigation ----------

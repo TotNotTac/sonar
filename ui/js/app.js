@@ -4,6 +4,7 @@
 import { backgroundMenu, itemsMenu, locationMenu, shortcuts, tabMenu } from "./contextmenus.js";
 import { Icons } from "./icons.js";
 import { isMenuOpen, showMenu } from "./menu.js";
+import { DragDrop } from "./dnd.js";
 import { Ops } from "./ops.js";
 import { Pane } from "./pane.js";
 import { store } from "./store.js";
@@ -32,6 +33,9 @@ export class App {
       statusLeft: $("status-left"), statusRight: $("status-right"),
     };
     this.ops = new Ops(this);
+    this.dnd = new DragDrop(this);
+    // Another app may have changed the clipboard while we were in the background.
+    window.addEventListener("focus", () => this.ops.syncClipboard());
     this.initToolbar();
     this.initLocation();
     this.initSidebar();
@@ -378,10 +382,11 @@ export class App {
     this.pane?.setViewMode(mode);
   }
 
-  contextMenu(x, y, ctx) {
-    if (ctx.kind === "items") return showMenu(x, y, itemsMenu(this, ctx.pane));
-    // Ask for the undo label first so the menu can say what Undo would do.
-    this.ops.undoLabel().then((label) => showMenu(x, y, backgroundMenu(this, ctx.pane, label)));
+  async contextMenu(x, y, ctx) {
+    // Look up what Undo would do and whether there is anything to paste first.
+    const [undoLabel, clip] = await Promise.all([this.ops.undoLabel(), this.ops.readClipboard()]);
+    const info = { undoLabel, canPaste: !!clip?.paths?.length };
+    showMenu(x, y, ctx.kind === "items" ? itemsMenu(this, ctx.pane, info) : backgroundMenu(this, ctx.pane, info));
   }
 
   // ---------- Toolbar ----------

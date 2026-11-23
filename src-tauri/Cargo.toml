@@ -18,3 +18,12 @@ tauri = { version = "2", features = [] }
 serde.workspace = true
 serde_json.workspace = true
 dirs.workspace = true
+drag = "2.1.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSString"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard", "NSPasteboardItem"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"

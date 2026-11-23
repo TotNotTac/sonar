@@ -595,3 +595,38 @@ td.name { color: var(--text); }
 .menu-item.hot .menu-shortcut { color: inherit; opacity: 0.85; }
 .menu-check svg, .menu-arrow svg { width: 14px; height: 14px; }
 .menu-sep { height: 1px; margin: 4px 6px; background: var(--border); }
+
+/* ---------- Rubber band, drag and drop ---------- */
+
+.rubberband {
+  position: absolute;
+  z-index: 2;
+  border: 1px solid var(--accent);
+  background: rgba(61, 174, 233, 0.15);
+  pointer-events: none;
+}
+
+.drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  padding: 4px 10px 4px 6px;
+  border-radius: 6px;
+  background: var(--selection);
+  color: var(--selection-text);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.drag-ghost span { overflow: hidden; text-overflow: ellipsis; }
+.drag-ghost svg { width: 18px; height: 18px; flex: none; }
+body.dragging-items, body.dragging-items * { cursor: grabbing !important; }
+
+.drop-target { outline: 2px solid var(--accent) !important; outline-offset: -2px; background: var(--hover) !important; }
+.scroller.drop-target { outline-offset: -3px; }
+.tab.drop-target, .place.drop-target, .crumb.drop-target { border-radius: 4px; }

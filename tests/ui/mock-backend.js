@@ -277,6 +277,18 @@
       const job = jobs.get(id);
       if (job) { job.cancelled = true; job.answer?.(["cancel", false]); }
     },
+    // System clipboard stand-in. Tests set `__mock.clipboard` directly to
+    // simulate files copied in Finder/Dolphin.
+    clipboard_write_files: ({ clip }) => { window.__mock.clipboard = clip; },
+    clipboard_read_files: () => {
+      const c = window.__mock.clipboard;
+      return c?.paths ? structuredClone(c) : null;
+    },
+    clipboard_write_text: ({ text }) => { window.__mock.clipboard = { text }; },
+    clipboard_clear_cut: () => {
+      if (window.__mock.clipboard?.mode === "cut") window.__mock.clipboard = null;
+    },
+    start_drag_out: ({ paths }) => { window.__mock.dragOuts.push(paths); },
     undo_label: () => undoStack.at(-1)?.label ?? null,
     undo: () => {
       const action = undoStack.pop();
@@ -290,6 +302,17 @@
   window.__mock = {
     HOME, TRASH, fs, calls, emit, watching, undoStack, mkdir, write, touched,
     denied: new Set(),
+    clipboard: null,
+    dragOuts: [],
+    /** Simulate Tauri's native drag-drop events for files dragged in from another app. */
+    dropFiles(paths, x, y, { leaveFirst = false } = {}) {
+      const dpr = window.devicePixelRatio;
+      const position = { x: x * dpr, y: y * dpr };
+      emit("tauri://drag-enter", { paths, position });
+      emit("tauri://drag-over", { position });
+      if (leaveFirst) return emit("tauri://drag-leave", null);
+      emit("tauri://drag-drop", { paths, position });
+    },
     countDelay: 30,
     windowCloses: 0,
     exists: (p) => fs.has(p),

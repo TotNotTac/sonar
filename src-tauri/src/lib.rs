@@ -1,4 +1,5 @@
 mod commands;
+mod native;
 mod ops;
 
 pub fn run() {
@@ -21,6 +22,11 @@ pub fn run() {
             ops::start_transfer,
             ops::cancel_job,
             ops::resolve_conflict,
+            native::clipboard_write_files,
+            native::clipboard_read_files,
+            native::clipboard_write_text,
+            native::clipboard_clear_cut,
+            native::start_drag_out,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sonar");
