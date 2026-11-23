@@ -9,7 +9,7 @@ test("item context menu for a folder", async ({ page }) => {
   await item(activePane(page), "Music").click({ button: "right" });
   await expect(item(activePane(page), "Music")).toHaveClass(/selected/);
   await expect(menuLabels(page)).toHaveText([
-    "Open", "Open in New Tab", "Open in Split View", "Open With", "Compress", "Cut", "Copy", "Paste Into Folder", "Copy Location",
+    "Open", "Open in New Tab", "Open in Split View", "Open With", "Compress", "Cut", "Copy", "Paste Into Folder", "Add to Places", "Copy Location",
     "Rename…", "Move to Trash", "Delete Permanently…", "Properties",
   ]);
   await expect(page.locator(".menu-item", { hasText: "Paste Into Folder" })).toHaveClass(/disabled/);
@@ -23,7 +23,7 @@ test("background menu with submenus, driven by keyboard", async ({ page }) => {
   await page.mouse.click(box.x + 300, box.y + box.height - 40, { button: "right" });
   await expect(menuLabels(page)).toHaveText([
     "New Folder…", "Paste", "Undo", "View Mode", "Sort By", "Show Hidden Files",
-    "Copy Location", "Search…", "Filter…", "Open in New Tab", "Split View", "Properties",
+    "Copy Location", "Search…", "Filter…", "Open in New Tab", "Split View", "Add to Places", "Properties",
   ]);
   // Down to "View Mode" (disabled items are skipped), open it, pick "Icons".
   for (let i = 0; i < 2; i++) await page.keyboard.press("ArrowDown");

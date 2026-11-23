@@ -741,3 +741,11 @@ td.location { direction: rtl; text-align: left; } /* ellipsize the start of long
 .app-row:hover { background: var(--hover); }
 .app-row.chosen { background: var(--selection); color: var(--selection-text); }
 .app-icon { width: 24px; height: 24px; object-fit: contain; flex: none; }
+
+/* ---------- Editable places ---------- */
+
+.place.reordering { opacity: 0.5; }
+.place.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.place.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+.place-rename { height: 22px; margin: 0; }
+.sidebar.drop-target { outline-offset: -4px; }

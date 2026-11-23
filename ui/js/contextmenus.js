@@ -83,6 +83,7 @@ export function itemsMenu(app, pane, info = {}) {
     { label: "Cut", shortcut: keys.cut, action: () => ops.setClipboard("cut", pane) },
     { label: "Copy", shortcut: keys.copy, action: () => ops.setClipboard("copy", pane) },
     folder && { label: "Paste Into Folder", disabled: !info.canPaste, action: () => ops.paste(folder.path) },
+    folder && { label: "Add to Places", action: () => app.addPlaces([folder.path]) },
     { label: "Copy Location", shortcut: keys.copyLocation, action: () => ops.copyLocation(pane) },
     "-",
     { label: "Rename…", shortcut: "F2", disabled: !one, action: () => ops.beginRename(pane) },
@@ -135,6 +136,7 @@ export function backgroundMenu(app, pane, { undoLabel = null, canPaste = false }
     { label: "Filter…", shortcut: keys.filter, action: () => pane.showFilter() },
     { label: "Open in New Tab", shortcut: keys.newTab, action: () => app.newTab(pane.path) },
     { label: split ? "Close Split View" : "Split View", shortcut: "F3", action: () => app.toggleSplit() },
+    !pane.view?.archive && !pane.search && { label: "Add to Places", action: () => app.addPlaces([pane.path]) },
     "-",
     { label: "Properties", shortcut: keys.properties, action: () => app.runAction("properties") },
   ];

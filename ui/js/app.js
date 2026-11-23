@@ -8,7 +8,7 @@ import { DragDrop } from "./dnd.js";
 import { Ops } from "./ops.js";
 import { Pane } from "./pane.js";
 import { showProperties } from "./properties.js";
-import { store } from "./store.js";
+import { placePrefs, savePlacePrefs, store } from "./store.js";
 import { Fmt } from "./format.js";
 import { basename, el, errMsg, invoke, isMac, isMod, listen, shortcut } from "./util.js";
 
@@ -645,9 +645,87 @@ export class App {
     this.renderPlaces(await invoke("get_places"));
   }
 
+  /** The Places section as the user arranged it, followed by remote and devices. */
+  customizePlaces(system) {
+    const prefs = placePrefs();
+    const custom = prefs.custom.map((c) => ({
+      label: c.label, path: c.path, icon: "folder", section: "places", usage: null, ejectable: false, mounted: true,
+      device: null, custom: true,
+    }));
+    const own = [...system.filter((p) => p.section === "places"), ...custom]
+      .filter((p) => !prefs.hidden.includes(p.path))
+      .map((p) => (prefs.renamed[p.path] ? { ...p, label: prefs.renamed[p.path] } : p));
+    const rank = (p) => {
+      const i = prefs.order.indexOf(p.path);
+      return i < 0 ? Infinity : i;
+    };
+    own.sort((a, b) => rank(a) - rank(b)); // stable: unknown entries keep their place
+    return [...own, ...system.filter((p) => p.section !== "places")];
+  }
+
+  updatePlacePrefs(fn) {
+    const prefs = placePrefs();
+    fn(prefs);
+    savePlacePrefs(prefs);
+    this.renderPlaces(this.places);
+  }
+
+  /** Add folders to the Places section (or un-hide them). */
+  addPlaces(paths) {
+    const shown = new Set(this.sidebarPlaces.filter((p) => p.section === "places").map((p) => p.path));
+    const added = paths.filter((p) => !shown.has(p));
+    if (!added.length) return this.flashStatus("Already in Places");
+    this.updatePlacePrefs((prefs) => {
+      for (const path of added) {
+        if (prefs.hidden.includes(path)) prefs.hidden = prefs.hidden.filter((h) => h !== path);
+        else prefs.custom.push({ label: this.folderLabel(path) === "/" ? "/" : basename(path), path });
+      }
+    });
+    this.flashStatus(added.length === 1 ? `Added “${basename(added[0])}” to Places` : `Added ${added.length} folders to Places`);
+  }
+
+  removePlace(place) {
+    this.updatePlacePrefs((prefs) => {
+      if (place.custom) prefs.custom = prefs.custom.filter((c) => c.path !== place.path);
+      else prefs.hidden.push(place.path);
+      delete prefs.renamed[place.path];
+    });
+  }
+
+  renamePlace(place) {
+    const row = [...this.els.sidebar.querySelectorAll(".place")].find((r) => r.dataset.path === place.path);
+    const label = row?.querySelector(".place-label");
+    if (!label) return;
+    const input = el("input", "rename-input place-rename");
+    input.value = place.label;
+    label.replaceWith(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = (commit) => {
+      if (done) return;
+      done = true;
+      const value = input.value.trim();
+      if (!commit || !value || value === place.label) return this.renderPlaces(this.places);
+      this.updatePlacePrefs((prefs) => {
+        const custom = prefs.custom.find((c) => c.path === place.path);
+        if (custom) custom.label = value;
+        else prefs.renamed[place.path] = value;
+      });
+    };
+    input.addEventListener("keydown", (ev) => {
+      ev.stopPropagation();
+      if (ev.key === "Enter") finish(true);
+      if (ev.key === "Escape") finish(false);
+    });
+    input.addEventListener("blur", () => finish(true));
+    input.addEventListener("click", (ev) => ev.stopPropagation());
+  }
+
   /** Sidebar: places, network shares, and devices with usage bars and eject buttons. */
   renderPlaces(places) {
-    this.places = places;
+    this.places = places; // system list (lookups); the sidebar shows the customised one
+    places = this.sidebarPlaces = this.customizePlaces(places);
     const titles = { places: "Places", remote: "Remote", devices: "Devices" };
     const frag = document.createDocumentFragment();
     for (const section of ["places", "remote", "devices"]) {
@@ -683,7 +761,7 @@ export class App {
 
   placeAt(node) {
     const row = node.closest(".place");
-    return row && this.places.find((p) => p.path === row.dataset.path);
+    return row && this.sidebarPlaces.find((p) => p.path === row.dataset.path);
   }
 
   /** Attached but unmounted drive: mount it, then open it. */
@@ -714,9 +792,60 @@ export class App {
     }
   }
 
+  /** Drag entries of the Places section up or down to reorder them. */
+  initPlaceReorder() {
+    const sidebar = this.els.sidebar;
+    let drag = null;
+    const rows = () => [...sidebar.querySelectorAll(".place")].filter((r) => this.placeAt(r)?.section === "places");
+    const clear = () => sidebar.querySelectorAll(".drop-before, .drop-after, .reordering")
+      .forEach((r) => r.classList.remove("drop-before", "drop-after", "reordering"));
+    sidebar.addEventListener("pointerdown", (ev) => {
+      const row = ev.target.closest(".place");
+      if (ev.button !== 0 || !row || ev.target.closest(".place-eject, input") || this.placeAt(row)?.section !== "places") return;
+      drag = { row, y: ev.clientY, started: false, target: null };
+    });
+    window.addEventListener("pointermove", (ev) => {
+      if (!drag) return;
+      if (!drag.started) {
+        if (Math.abs(ev.clientY - drag.y) < 5) return;
+        drag.started = true;
+        drag.row.classList.add("reordering");
+      }
+      clear();
+      drag.row.classList.add("reordering");
+      const over = rows().find((r) => {
+        const b = r.getBoundingClientRect();
+        return ev.clientY >= b.top && ev.clientY < b.bottom;
+      });
+      if (over && over !== drag.row) {
+        const b = over.getBoundingClientRect();
+        const after = ev.clientY > b.top + b.height / 2;
+        over.classList.add(after ? "drop-after" : "drop-before");
+        drag.target = { row: over, after };
+      } else {
+        drag.target = null;
+      }
+    });
+    window.addEventListener("pointerup", () => {
+      const d = drag;
+      drag = null;
+      if (!d?.started) return;
+      clear();
+      this.placeDragged = true; // swallow the click that follows
+      setTimeout(() => { this.placeDragged = false; }, 0);
+      if (!d.target) return;
+      const order = rows().map((r) => r.dataset.path).filter((p) => p !== d.row.dataset.path);
+      let at = order.indexOf(d.target.row.dataset.path);
+      if (d.target.after) at += 1;
+      order.splice(at, 0, d.row.dataset.path);
+      this.updatePlacePrefs((prefs) => { prefs.order = order; });
+    });
+  }
+
   initSidebar() {
     const { sidebar, splitter } = this.els;
     sidebar.addEventListener("click", (ev) => {
+      if (this.placeDragged) { this.placeDragged = false; return; } // end of a reorder drag
       const place = this.placeAt(ev.target);
       if (!place) return;
       if (ev.target.closest(".place-eject")) this.ejectPlace(place);
@@ -730,11 +859,24 @@ export class App {
     sidebar.addEventListener("contextmenu", (ev) => {
       ev.preventDefault();
       const place = this.placeAt(ev.target);
-      if (!place) return;
+      const prefs = placePrefs();
+      if (!place) {
+        const customized = prefs.custom.length || prefs.hidden.length || prefs.order.length || Object.keys(prefs.renamed).length;
+        return showMenu(ev.clientX, ev.clientY, [
+          { label: `Show Hidden Places${prefs.hidden.length ? ` (${prefs.hidden.length})` : ""}`, disabled: !prefs.hidden.length,
+            action: () => this.updatePlacePrefs((p) => { p.hidden = []; }) },
+          { label: "Reset Places", disabled: !customized, action: () => { savePlacePrefs({}); this.renderPlaces(this.places); } },
+        ]);
+      }
       const items = place.mounted ? locationMenu(this, place.path) : [{ label: "Mount", action: () => this.mountPlace(place) }];
+      if (place.section === "places") {
+        items.push("-", { label: "Rename…", action: () => this.renamePlace(place) },
+          { label: place.custom ? "Remove from Places" : "Hide", action: () => this.removePlace(place) });
+      }
       if (place.ejectable) items.push("-", { label: place.section === "remote" ? "Disconnect" : "Eject", action: () => this.ejectPlace(place) });
       showMenu(ev.clientX, ev.clientY, items);
     });
+    this.initPlaceReorder();
     // Drives attached, mounted or removed elsewhere (backend polls).
     listen("places-changed", ({ payload }) => this.renderPlaces(payload));
 

@@ -18,6 +18,20 @@ export const store = {
   },
 };
 
+// ---------- Sidebar customisations ----------
+//
+// Layered over the system places, so new drives and user folders still show up:
+// custom entries, hidden ones, renamed ones, and the order of the Places section.
+
+export function placePrefs() {
+  const p = store.get("places", {});
+  return { custom: p.custom ?? [], hidden: p.hidden ?? [], renamed: p.renamed ?? {}, order: p.order ?? [] };
+}
+
+export function savePlacePrefs(prefs) {
+  store.set("places", prefs);
+}
+
 // ---------- Per-folder view properties ----------
 //
 // Like Dolphin's "remember display style for each folder": view mode and sort

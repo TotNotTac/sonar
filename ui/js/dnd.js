@@ -65,7 +65,7 @@ export class DragDrop {
     const items = pane.selectedEntries();
     if (!items.length) return;
     pane.pendingCollapse = null; // keep the multi-selection being dragged
-    this.drag = { pane, paths: items.map((e) => e.path) };
+    this.drag = { pane, paths: items.map((e) => e.path), folders: !pane.view?.archive && items.every((e) => pane.isFolder(e)) };
     const label = items.length === 1 ? items[0].name : plural(items.length, "item");
     this.ghost = el("div", "drag-ghost", `${Icons.entry(items.length === 1 ? items[0].icon : "file")}<span></span>`);
     this.ghost.querySelector("span").textContent = label;
@@ -80,6 +80,7 @@ export class DragDrop {
     const target = this.target;
     const paths = this.drag.paths;
     this.end();
+    if (target?.addPlace) return this.app.addPlaces(paths);
     if (target) this.drop(paths, target.path, ev, ev.clientX, ev.clientY);
   }
 
@@ -130,6 +131,10 @@ export class DragDrop {
     const place = node.closest(".place:not(.unmounted)");
     const crumb = node.closest(".crumb");
     const paneEl = node.closest(".pane");
+    // Folders dropped on empty sidebar space become new Places.
+    if (!place && !crumb && node.closest(".sidebar")) {
+      return this.drag?.folders ? { addPlace: true, path: "(add place)", el: node.closest(".sidebar") } : null;
+    }
     if (tabEl) {
       tab = this.app.tabs.find((t) => String(t.id) === tabEl.dataset.tab);
       const p = tab?.panes[tab.active];
