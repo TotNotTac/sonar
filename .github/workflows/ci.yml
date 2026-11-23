@@ -26,12 +26,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install WebKitGTK and friends (cached)
+      - name: Install WebKitGTK and friends
         if: runner.os == 'Linux'
-        uses: awalsh128/cache-apt-pkgs-action@v1
-        with:
-          packages: libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
-          version: 1.0
+        # Skipping the man-db index rebuild after installs is the big win on
+        # GitHub's Ubuntu runners. (Caching .debs with cache-apt-pkgs-action
+        # broke linking: dependency .so symlinks weren't restored.)
+        run: |
+          sudo rm -f /var/lib/man-db/auto-update
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf libarchive-tools
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -53,7 +57,7 @@ jobs:
           # pacman's download sandbox can't always set up seccomp inside containers.
           sed -i 's/^\[options\]/[options]\nDisableSandbox/' /etc/pacman.conf
           # shared-mime-info + an icon theme let the type/icon tests use real system data.
-          pacman -Syu --noconfirm --needed rust gcc git shared-mime-info adwaita-icon-theme util-linux
+          pacman -Syu --noconfirm --needed rust gcc git shared-mime-info adwaita-icon-theme util-linux libarchive
       - uses: actions/checkout@v4
       - run: cargo test -p sonar-core
       - run: cargo test -p sonar-core -- --ignored
