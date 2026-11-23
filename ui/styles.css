@@ -762,3 +762,16 @@ td.location { direction: rtl; text-align: left; } /* ellipsize the start of long
 .place.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 .place-rename { height: 22px; margin: 0; }
 .sidebar.drop-target { outline-offset: -4px; }
+
+/* ---------- Settings ---------- */
+
+.dialog.settings { width: min(460px, calc(100vw - 32px)); }
+.settings-group { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; border: 0; }
+.settings-group legend { margin-bottom: 4px; padding: 0; color: var(--text-dim); font-weight: 600; }
+.settings-row { display: grid; grid-template-columns: 96px 1fr; align-items: center; gap: 8px; }
+.settings-pair { display: flex; gap: 6px; }
+.settings-pair select { flex: 1; min-width: 0; }
+.settings-folder { display: flex; gap: 6px; padding-left: 22px; }
+.settings-folder .text-input { flex: 1; min-width: 0; }
+.settings-folder .text-input:disabled, .settings-folder .btn:disabled { opacity: 0.5; }
+.settings-reset { margin-right: auto; }

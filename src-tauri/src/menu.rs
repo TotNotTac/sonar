@@ -19,6 +19,7 @@ pub const EVENT_MENU: &str = "menu";
 /// (id, label, accelerator) for plain items; ids are the frontend's action ids.
 type Item = (&'static str, &'static str, Option<&'static str>);
 
+const APP: &[Item] = &[("settings", "Settings…", Some("CmdOrCtrl+Comma"))];
 const FILE: &[Item] = &[
     ("new-tab", "New Tab", Some("CmdOrCtrl+T")),
     ("new-folder", "New Folder", Some("CmdOrCtrl+Shift+N")),
@@ -101,8 +102,8 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         comments: Some("A file manager inspired by KDE Dolphin".into()),
         ..Default::default()
     };
-    let app_menu = SubmenuBuilder::new(app, "Sonar")
-        .about(Some(about))
+    let app_menu = SubmenuBuilder::new(app, "Sonar").about(Some(about)).separator();
+    let app_menu = items(app, app_menu, APP)?
         .separator()
         .services()
         .separator()
@@ -189,7 +190,7 @@ mod tests {
 
     #[test]
     fn accelerators_parse() {
-        let all = [FILE, EDIT_FILES, VIEW_CHECKS, VIEW_ITEMS, GO, WINDOW].concat();
+        let all = [APP, FILE, EDIT_FILES, VIEW_CHECKS, VIEW_ITEMS, GO, WINDOW].concat();
         for (id, _, accel) in all {
             if let Some(a) = accel {
                 a.parse::<muda::accelerator::Accelerator>().unwrap_or_else(|e| panic!("{id}: {a}: {e}"));
@@ -200,7 +201,7 @@ mod tests {
 
     #[test]
     fn ids_are_unique() {
-        let all = [FILE, EDIT_FILES, VIEW_CHECKS, VIEW_ITEMS, GO, WINDOW].concat();
+        let all = [APP, FILE, EDIT_FILES, VIEW_CHECKS, VIEW_ITEMS, GO, WINDOW].concat();
         let ids: Vec<_> = all.iter().map(|i| i.0).filter(|i| !i.is_empty()).collect();
         let unique: std::collections::HashSet<_> = ids.iter().collect();
         assert_eq!(ids.len(), unique.len());

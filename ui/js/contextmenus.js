@@ -22,6 +22,7 @@ const keys = {
   newTab: shortcut("mod+T"),
   closeTab: shortcut("mod+W"),
   reopenTab: shortcut("mod+shift+T"),
+  settings: isMac ? shortcut("mod+,") : "Ctrl+Shift+,",
 };
 export { keys as shortcuts };
 
@@ -179,6 +180,8 @@ export function appMenu(app) {
       ],
     },
     { label: "Copy Location", shortcut: keys.copyLocation, action: run("copy-location") },
+    "-",
+    { label: "Configure Sonar…", shortcut: keys.settings, action: run("settings") },
     "-",
     { label: "Close Window", action: run("close-window") },
   ];

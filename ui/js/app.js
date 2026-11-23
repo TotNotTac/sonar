@@ -8,7 +8,8 @@ import { DragDrop } from "./dnd.js";
 import { Ops } from "./ops.js";
 import { Pane } from "./pane.js";
 import { showProperties } from "./properties.js";
-import { placePrefs, savePlacePrefs, store } from "./store.js";
+import { showSettings } from "./settings.js";
+import { placePrefs, savePlacePrefs, settings, store } from "./store.js";
 import { Fmt } from "./format.js";
 import { basename, el, errMsg, invoke, isMac, isMod, listen, shortcut } from "./util.js";
 
@@ -67,9 +68,10 @@ export class App {
     // listen first, then collect what arrived before we were ready.
     listen("open-paths", ({ payload }) => this.openRequested(payload));
     const requested = await invoke("take_open_requests").catch(() => []);
-    const restored = this.restoreSession();
+    const { startup, startupFolder } = settings();
+    const restored = startup === "session" && this.restoreSession();
     if (requested.length) this.openRequested(requested);
-    else if (!restored) this.newTab(this.home);
+    else if (!restored) this.newTab(startup === "folder" && startupFolder ? startupFolder : this.home);
   }
 
   /** Open each requested folder in a new tab (selecting a requested file). */
@@ -109,6 +111,7 @@ export class App {
       filter: () => this.pane.showFilter(),
       search: () => this.pane.showSearch(),
       properties: () => showProperties(this, this.pane),
+      settings: () => showSettings(this),
       reload: () => this.pane.reload(),
       back: () => this.pane.goBack(),
       forward: () => this.pane.goForward(),
@@ -131,7 +134,7 @@ export class App {
     if (field) {
       if (id === "undo") return document.execCommand("undo");
       if (id === "select-all") return field.select();
-      const harmless = /^(new-tab|close-window|reopen-tab|next-tab|prev-tab|view-|show-hidden|split|reload|go-)/;
+      const harmless = /^(new-tab|close-window|reopen-tab|next-tab|prev-tab|view-|show-hidden|split|reload|go-|settings$)/;
       if (!harmless.test(id)) return;
     }
     if (!this.pane) return;
@@ -515,6 +518,12 @@ export class App {
 
   setViewMode(mode) {
     this.pane?.setViewMode(mode);
+  }
+
+  /** The default view or "remember per folder" changed: every pane looks again. */
+  viewSettingsChanged(except = null) {
+    this.forEachPane((p) => p !== except && p.reapplyViewProps());
+    this.updateChrome();
   }
 
   async contextMenu(x, y, ctx) {
@@ -950,6 +959,9 @@ export class App {
     if (mod && !ev.altKey && !ev.shiftKey && lower === "f") return run(() => pane.showSearch());
     if ((!isMac && ev.ctrlKey && lower === "i") || (isMac && ev.metaKey && ev.altKey && ev.code === "KeyF")) return run(() => pane.showFilter());
     // Match the physical key for "." : with Shift held, ev.key is ">" on most layouts.
+    // Configure: ⌘, (macOS Settings) / Ctrl+Shift+, (Dolphin). ev.code: Shift turns "," into "<".
+    if ((isMac && ev.metaKey && !ev.shiftKey && ev.code === "Comma") || (!isMac && ev.ctrlKey && ev.shiftKey && ev.code === "Comma"))
+      return run(() => showSettings(this));
     if ((ev.ctrlKey && lower === "h") || (isMac && ev.metaKey && ev.shiftKey && ev.code === "Period") || (ev.altKey && ev.code === "Period"))
       return run(() => this.toggleHidden());
     return false;

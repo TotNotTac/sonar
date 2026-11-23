@@ -9,6 +9,7 @@
 
 import { Fmt } from "./format.js";
 import { Icons } from "./icons.js";
+import { settings } from "./store.js";
 import { assetUrl, esc } from "./util.js";
 
 const COLUMNS = [
@@ -102,8 +103,9 @@ export class IconsView {
 
   render() {
     const pane = this.pane;
+    const { thumbnails: thumbnail } = settings();
     this.root.innerHTML = pane.items.map((e, i) => `<div data-i="${i}"${itemClasses(pane, e)} title="${esc(pane.search ? e.path : e.name)}">
-        <span class="ficon big">${entryIcon(e, 48, { thumbnail: true })}</span>
+        <span class="ficon big">${entryIcon(e, 48, { thumbnail })}</span>
         <span class="tile-label">${esc(e.name)}</span>
       </div>`).join("");
   }

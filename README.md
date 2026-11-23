@@ -5,7 +5,8 @@ A file manager inspired by KDE Dolphin, built with Tauri 2 and Rust. Targets mac
 **Status:** browsing, live updates, opening files, and file operations (rename, new folder, trash, delete, copy/cut/paste with progress and conflict handling, undo), drag and drop (within Sonar and with other apps),
 the system clipboard, tabs, split view and rubber-band selection, OS file types and icons, image thumbnails,
 disk usage and mount/eject in the sidebar, a native menu bar on macOS, archives (browse, extract, compress,
-passwords, archives inside archives), fuzzy search, Properties, Open With, and an editable Places sidebar.
+passwords, archives inside archives), fuzzy search, Properties, Open With, an editable Places sidebar, and Settings (startup, view defaults,
+thumbnails, confirmations).
 
 ## Layout
 
@@ -51,6 +52,7 @@ ui/                     static frontend, native ES modules (no bundler)
   js/dnd.js             drag and drop: in-window, out to other apps, and drops from them
   js/store.js           settings, per-folder view properties, Places customisations
   js/properties.js      Properties dialog
+  js/settings.js        Configure Sonar dialog
   js/openwith.js        Open With: app chooser, "always use" for a file type
   js/password.js        password prompt for encrypted archives
 ```
@@ -123,7 +125,7 @@ Arch Linux.
 | Rename | F2 | F2 |
 | New folder | Ctrl+Shift+N | ⌘⇧N |
 | Move to Trash | Delete | ⌘⌫, Delete |
-| Delete permanently (asks first) | Shift+Delete | ⌘⌥⌫ |
+| Delete permanently (asks first, unless turned off in Settings) | Shift+Delete | ⌘⌥⌫ |
 | Copy / Cut / Paste | Ctrl+C / X / V | ⌘C / X / V |
 | Paste as move (Finder style) | — | ⌘⌥V |
 | Copy location (path as text) | Ctrl+Alt+C | ⌘⌥C |
@@ -168,6 +170,7 @@ panel; name clashes ask Skip / Keep Both / Replace (or Merge for folders), optio
 | New tab / Close tab | Ctrl+T / Ctrl+W | ⌘T / ⌘W |
 | Reopen closed tab | Ctrl+Shift+T | ⌘⇧T |
 | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab | ⌃Tab, ⌘⇧] / ⌘⇧[ |
+| Settings | Ctrl+Shift+, | ⌘, |
 
 On macOS the menu bar's Go menu also has Finder's shortcuts (⌘⇧H Home, ⌘⇧D Desktop, ⌘⇧O Documents,
 ⌘⌥L Downloads); on Linux the same actions are in the toolbar's ☰ menu.

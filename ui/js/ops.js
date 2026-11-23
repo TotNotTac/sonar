@@ -6,6 +6,7 @@ import { ask } from "./dialog.js";
 import { Fmt } from "./format.js";
 import { basename, el, errMsg, invoke, isMac, isMod, listen, modLabel, parentOf, plural } from "./util.js";
 import { obtainPassword } from "./password.js";
+import { settings } from "./store.js";
 
 export class Ops {
   constructor(app) {
@@ -119,7 +120,7 @@ export class Ops {
     permanent ||= this.inTrash(pane);
     const what = this.describe(items);
 
-    if (permanent) {
+    if (permanent && settings().confirmDelete) {
       const { value } = await ask({
         title: `Permanently delete ${what}?`,
         message: "This cannot be undone.",
@@ -129,6 +130,15 @@ export class Ops {
         ],
       });
       if (value !== "delete") return;
+    } else if (!permanent && settings().confirmTrash) {
+      const { value } = await ask({
+        title: `Move ${what} to the Trash?`,
+        buttons: [
+          { label: "Cancel", value: "cancel", cancel: true },
+          { label: "Move to Trash", value: "trash", primary: true },
+        ],
+      });
+      if (value !== "trash") return;
     }
 
     const select = this.nameAfterRemoval(pane, items);

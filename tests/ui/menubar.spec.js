@@ -7,7 +7,7 @@ test("☰ menu (no native menu bar) drives the same actions", async ({ page }) =
   await page.locator("#btn-menu").click();
   await expect(page.locator(".menu").first().locator(".menu-label")).toHaveText([
     "New Tab", "New Folder…", "Reopen Closed Tab", "View Mode", "Show Hidden Files", "Split View", "Search…", "Filter…",
-    "Go", "Copy Location", "Close Window",
+    "Go", "Copy Location", "Configure Sonar…", "Close Window",
   ]);
   await page.locator(".menu-item", { hasText: "Split View" }).click();
   await expect(panes(page)).toHaveCount(2);
@@ -27,6 +27,8 @@ test("native menu bar items run actions", async ({ page }) => {
   await expect(activePane(page).locator(".grid")).toBeVisible();
   await mock(page, () => window.__mock.menu("back"));
   await expectPath(page, HOME);
+  await mock(page, () => window.__mock.menu("settings"));
+  await expect(page.locator("dialog.settings[open]")).toBeVisible();
 });
 
 test("a shortcut handled by the page doesn't also run from the menu", async ({ page }) => {

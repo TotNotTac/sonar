@@ -2,7 +2,7 @@
 
 import { Fmt } from "./format.js";
 import { Icons } from "./icons.js";
-import { saveViewProps, viewPropsFor } from "./store.js";
+import { saveViewProps, settings, viewPropsFor } from "./store.js";
 import { childNameOnPath, el, errMsg, invoke, isMac, isMod, plural } from "./util.js";
 import { VIEWS } from "./views.js";
 import { obtainPassword } from "./password.js";
@@ -597,6 +597,23 @@ export class Pane {
     this.render();
     this.restoreSelection(names, null, false);
     this.app.paneChanged(this);
+    if (!settings().rememberViewPerFolder) this.app.viewSettingsChanged(this);
+  }
+
+  /** Settings changed: take this folder's view mode and sort order again. */
+  reapplyViewProps() {
+    if (!this.view) return;
+    const props = viewPropsFor(this.path);
+    if (props.viewMode !== this.props.viewMode) {
+      const names = this.selectedNames();
+      this.props = { ...this.props, viewMode: props.viewMode };
+      this.mountView();
+      this.render();
+      this.restoreSelection(names, null, false);
+    }
+    const resort = props.sort.key !== this.props.sort.key || props.sort.order !== this.props.sort.order;
+    this.props = props;
+    if (resort && !this.search) this.reload();
   }
 
   setSort(sort) {
@@ -608,6 +625,7 @@ export class Pane {
     this.props = { ...this.props, sort };
     saveViewProps(this.path, this.props);
     this.reload();
+    if (!settings().rememberViewPerFolder) this.app.viewSettingsChanged(this);
   }
 
   /** Header click: same column flips the order, a new column starts at its natural order. */
