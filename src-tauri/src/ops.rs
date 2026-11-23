@@ -162,6 +162,32 @@ struct JobFinished {
     errors: Vec<String>,
     /// Top-level items the job created (for selecting them afterwards).
     created: Vec<PathBuf>,
+    /// An encrypted archive stopped the job: ask for its password and retry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    needs_password: Option<NeedsPassword>,
+}
+
+#[derive(Clone, Serialize)]
+struct NeedsPassword {
+    path: PathBuf,
+    wrong: bool,
+}
+
+impl JobFinished {
+    fn new(id: u64, kind: &'static str) -> Self {
+        JobFinished { id, kind, cancelled: false, completed: 0, errors: vec![], created: vec![], needs_password: None }
+    }
+
+    fn failed(id: u64, kind: &'static str, err: CoreError) -> Self {
+        let needs_password = match &err {
+            CoreError::PasswordRequired { archive, wrong } => {
+                Some(NeedsPassword { path: archive.clone(), wrong: *wrong })
+            }
+            _ => None,
+        };
+        let errors = if needs_password.is_some() { vec![] } else { vec![err.to_string()] };
+        JobFinished { errors, needs_password, ..JobFinished::new(id, kind) }
+    }
 }
 
 const fn kind_name(kind: TransferKind) -> &'static str {
@@ -221,8 +247,7 @@ pub fn start_transfer(app: AppHandle, state: State<'_, OpsState>, request: Trans
             if archive::split_virtual(&dest_dir).is_some() {
                 lock(&ops_state.jobs).remove(&id);
                 let errors = vec![format!("“{}” is an archive; its contents are read-only", dest_dir.display())];
-                let fin =
-                    JobFinished { id, kind: kind_name(kind), cancelled: false, completed: 0, errors, created: vec![] };
+                let fin = JobFinished { errors, ..JobFinished::new(id, kind_name(kind)) };
                 let _ = app.emit(EVENT_JOB_FINISHED, fin);
                 return;
             }
@@ -239,7 +264,13 @@ pub fn start_transfer(app: AppHandle, state: State<'_, OpsState>, request: Trans
                 _ => {}
             }
             let errors = out.errors.iter().map(ToString::to_string).collect();
-            let fin = JobFinished { id, kind: kind_name(kind), cancelled: out.cancelled, completed, errors, created };
+            let fin = JobFinished {
+                cancelled: out.cancelled,
+                completed,
+                errors,
+                created,
+                ..JobFinished::new(id, kind_name(kind))
+            };
             let _ = app.emit(EVENT_JOB_FINISHED, fin);
         })
         .expect("failed to spawn job thread");
@@ -270,33 +301,22 @@ fn extract_entries(
     sources: &[PathBuf],
     dest_dir: &std::path::Path,
 ) -> JobFinished {
-    let fail = |msg: String| JobFinished {
-        id,
-        kind: "copy",
-        cancelled: false,
-        completed: 0,
-        errors: vec![msg],
-        created: vec![],
-    };
-    let parts: Vec<(PathBuf, String)> = sources.iter().filter_map(|s| archive::split_virtual(s)).collect();
-    let Some((archive_path, first)) = parts.first().cloned() else { return fail("Nothing to copy".into()) };
-    let dir = first.rsplit_once('/').map_or("", |(d, _)| d).to_string();
-    let same_folder = parts.len() == sources.len()
-        && parts.iter().all(|(a, inner)| *a == archive_path && inner.rsplit_once('/').map_or("", |(d, _)| d) == dir);
-    if !same_folder {
-        return fail("Items from different archive folders can't be copied together".into());
+    let fail = |msg: &str| JobFinished::failed(id, "copy", CoreError::Other(msg.into()));
+    let Some(dir) = sources.first().and_then(|s| s.parent()) else { return fail("Nothing to copy") };
+    if sources.iter().any(|s| s.parent() != Some(dir)) {
+        return fail("Items from different archive folders can't be copied together");
     }
     let names: Vec<String> =
-        parts.iter().map(|(_, inner)| inner.rsplit('/').next().unwrap_or(inner).to_string()).collect();
-    match archive::extract(&archive_path, dest_dir, Some((&dir, &names)), cancel, &mut archive_progress(app, id)) {
+        sources.iter().filter_map(|s| s.file_name()).map(|n| n.to_string_lossy().into_owned()).collect();
+    match archive::extract_items(dir, &names, dest_dir, cancel, &mut archive_progress(app, id)) {
         Ok(Some(created)) => {
             if !created.is_empty() {
                 app.state::<OpsState>().push_undo(UndoAction::Created("Extract", created.clone()));
             }
-            JobFinished { id, kind: "copy", cancelled: false, completed: created.len(), errors: vec![], created }
+            JobFinished { completed: created.len(), created, ..JobFinished::new(id, "copy") }
         }
-        Ok(None) => JobFinished { id, kind: "copy", cancelled: true, completed: 0, errors: vec![], created: vec![] },
-        Err(e) => fail(e.to_string()),
+        Ok(None) => JobFinished { cancelled: true, ..JobFinished::new(id, "copy") },
+        Err(e) => JobFinished::failed(id, "copy", e),
     }
 }
 
@@ -333,11 +353,18 @@ pub fn start_extract(
     spawn_job(app, &state, move |app, id, cancel| {
         let mut created = Vec::new();
         let mut errors = Vec::new();
+        let mut needs_password = None;
         for a in &archives {
             let Some(dest) = dest_dir.clone().or_else(|| a.parent().map(PathBuf::from)) else { continue };
-            match archive::extract(a, &dest, None, cancel, &mut archive_progress(app, id)) {
+            match archive::extract(a, &dest, cancel, &mut archive_progress(app, id)) {
                 Ok(Some(items)) => created.extend(items),
                 Ok(None) => break,
+                Err(e @ CoreError::PasswordRequired { .. }) => {
+                    // Stop here; the UI asks for the password and retries
+                    // from this archive on.
+                    needs_password = JobFinished::failed(id, "extract", e).needs_password;
+                    break;
+                }
                 Err(e) => errors.push(e.to_string()),
             }
         }
@@ -345,7 +372,14 @@ pub fn start_extract(
             app.state::<OpsState>().push_undo(UndoAction::Created("Extract", created.clone()));
         }
         let cancelled = cancel.load(Ordering::Relaxed);
-        JobFinished { id, kind: "extract", cancelled, completed: created.len(), errors, created }
+        JobFinished {
+            cancelled,
+            completed: created.len(),
+            errors,
+            created,
+            needs_password,
+            ..JobFinished::new(id, "extract")
+        }
     })
 }
 
@@ -359,32 +393,18 @@ pub fn start_compress(
     format: archive::Format,
 ) -> u64 {
     spawn_job(app, &state, move |app, id, cancel| {
-        let fail = |msg: String| JobFinished {
-            id,
-            kind: "compress",
-            cancelled: false,
-            completed: 0,
-            errors: vec![msg],
-            created: vec![],
+        let new = || JobFinished::new(id, "compress");
+        let Some(parent) = sources.first().and_then(|s| s.parent()) else {
+            return JobFinished::failed(id, "compress", CoreError::Other("Nothing to compress".into()));
         };
-        let Some(parent) = sources.first().and_then(|s| s.parent()) else { return fail("Nothing to compress".into()) };
         let dest = ops::available_name(parent, &archive::default_name(&sources, format), false);
         match archive::compress(&sources, &dest, format, cancel, &mut archive_progress(app, id)) {
             Ok(Some(path)) => {
                 app.state::<OpsState>().push_undo(UndoAction::Created("Compress", vec![path.clone()]));
-                JobFinished {
-                    id,
-                    kind: "compress",
-                    cancelled: false,
-                    completed: 1,
-                    errors: vec![],
-                    created: vec![path],
-                }
+                JobFinished { completed: 1, created: vec![path], ..new() }
             }
-            Ok(None) => {
-                JobFinished { id, kind: "compress", cancelled: true, completed: 0, errors: vec![], created: vec![] }
-            }
-            Err(e) => fail(e.to_string()),
+            Ok(None) => JobFinished { cancelled: true, ..new() },
+            Err(e) => JobFinished::failed(id, "compress", e),
         }
     })
 }

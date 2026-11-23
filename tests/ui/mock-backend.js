@@ -46,8 +46,11 @@
   const archives = new Map(); // archive path -> [{ path, isDir, size }]
   const ARCHIVE_RE = /\.(zip|7z|rar|tar\.gz|tar\.xz|tar\.bz2|tgz)$/i;
   const archiveStem = (name) => name.replace(ARCHIVE_RE, "");
-  function addArchive(path, items) {
-    write(path, 4096);
+  const encrypted = new Map(); // archive path -> its password
+  const passwords = new Map(); // what the user entered (set_archive_password)
+  function addArchive(path, items, { nested = false, password = null } = {}) {
+    if (!nested) write(path, 4096);
+    if (password) encrypted.set(path, password);
     const all = new Map();
     for (const it of items) {
       const parts = it.path.split("/");
@@ -68,6 +71,22 @@
     { path: "a.txt", isDir: false, size: 1 },
     { path: "b.txt", isDir: false, size: 1 },
   ]);
+  // Encrypted, with an archive inside it.
+  addArchive(`${HOME}/Downloads/secret.zip`, [
+    { path: "plan.txt", isDir: false, size: 10 },
+    { path: "inner.tar.gz", isDir: false, size: 300 },
+  ], { password: "hunter2" });
+  addArchive(`${HOME}/Downloads/secret.zip/inner.tar.gz`, [{ path: "deep/treasure.txt", isDir: false, size: 5 }], { nested: true });
+  /** Throws `passwordRequired` unless every encrypted archive on the way to `path` is unlocked. */
+  function unlock(path, { listing = false } = {}) {
+    for (const [a, pw] of encrypted) {
+      // Listing an encrypted archive itself works; reading its files doesn't.
+      const reads = path.startsWith(`${a}/`) && !(listing && !splitVirtual(path)[0].startsWith(`${a}/`));
+      if (reads && passwords.get(a) !== pw) {
+        throw { code: "passwordRequired", message: `"${nameOf(a)}" is password protected`, path: a, wrong: passwords.has(a) };
+      }
+    }
+  }
   /** [archive, inner] for paths inside (or at) an archive, else null. */
   function splitVirtual(path) {
     let p = path;
@@ -293,6 +312,7 @@
       const virt = splitVirtual(path);
       if (virt) {
         const [archive, inner] = virt;
+        unlock(path, { listing: true });
         if (inner && !archives.get(archive).some((e) => e.path === inner && e.isDir)) throw notFound(path);
         const generation = (generations.get(pane) ?? 0) + 1;
         generations.set(pane, generation);
@@ -304,7 +324,7 @@
             name, path: `${path}/${name}`, kind: e.isDir ? "directory" : "file", isSymlink: false, isHidden: false, readonly: true,
             size: e.isDir ? null : e.size, childCount: e.isDir ? archiveChildren(archive, e.path).length : null, modified: now,
             typeLabel: e.isDir ? "Folder" : `${ext.toUpperCase()} file`, icon: e.isDir ? "folder" : "file",
-            typeId: null, iconKey: null, thumbnail: false, archive: false,
+            typeId: null, iconKey: null, thumbnail: false, archive: !e.isDir && ARCHIVE_RE.test(name),
           };
         });
         return {
@@ -339,7 +359,9 @@
       else if (!p.startsWith("/")) p = join(cwd, p);
       return p.replace(/\/+$/, "") || "/";
     },
+    set_archive_password: ({ path, password }) => { passwords.set(path, password); },
     open_path: ({ path }) => {
+      unlock(path);
       window.__mock.opened.push(path);
       if (path.endsWith(".unknown")) throw err("open", `Could not open "${path}": no application knows how to open it`);
     },
@@ -378,6 +400,12 @@
       setTimeout(() => {
         const created = [];
         for (const a of list) {
+          try {
+            unlock(`${a}/x`);
+          } catch (e) {
+            emit("job-finished", { id, kind: "extract", cancelled: false, completed: created.length, errors: [], created, needsPassword: { path: e.path, wrong: e.wrong } });
+            return;
+          }
           const dest = destDir ?? parentOf(a);
           const entries = archives.get(a);
           const roots = entries.filter((e) => !e.path.includes("/"));
@@ -421,6 +449,12 @@
         const id = nextJob++;
         setTimeout(() => {
           const created = [];
+          try {
+            unlock(request.sources[0]);
+          } catch (e) {
+            emit("job-finished", { id, kind: "copy", cancelled: false, completed: 0, errors: [], created, needsPassword: { path: e.path, wrong: e.wrong } });
+            return;
+          }
           for (const src of request.sources) {
             const [archive, inner] = splitVirtual(src);
             const entry = archives.get(archive).find((e) => e.path === inner);

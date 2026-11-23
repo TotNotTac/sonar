@@ -725,6 +725,19 @@ td.location { direction: rtl; text-align: left; } /* ellipsize the start of long
 /* ---------- Open With ---------- */
 
 .menu-icon { width: 16px; height: 16px; object-fit: contain; }
+.dialog.password-dialog { width: min(380px, calc(100vw - 32px)); }
+.dialog-message.error { color: var(--danger, #da4453); }
+.text-input {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  outline: none;
+  background: var(--view);
+  color: var(--text);
+  font: inherit;
+}
+.text-input:focus { border-color: var(--accent); }
 .dialog.choose-app { width: min(420px, calc(100vw - 32px)); }
 .app-list {
   display: flex;

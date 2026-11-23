@@ -5,6 +5,7 @@ import { Icons } from "./icons.js";
 import { saveViewProps, viewPropsFor } from "./store.js";
 import { childNameOnPath, el, errMsg, invoke, isMac, isMod, plural } from "./util.js";
 import { VIEWS } from "./views.js";
+import { obtainPassword } from "./password.js";
 
 let nextId = 1;
 
@@ -280,6 +281,12 @@ export class Pane {
       });
     } catch (err) {
       if (id !== this.requestId || this.closed) return false;
+      // A nested archive inside an encrypted one: ask, then try again.
+      if (await obtainPassword(err)) {
+        if (id !== this.requestId || this.closed) return false;
+        return this.navigate(path, { mode, select, preserveScroll, onError });
+      }
+      if (id !== this.requestId || this.closed) return false;
       if (onError) onError(err);
       else this.showMessage(errMsg(err));
       return false;
@@ -351,10 +358,16 @@ export class Pane {
     if (this.isFolder(e) || e.archive) return this.navigate(e.path);
     if (e.kind === "brokenSymlink") return this.showMessage(`"${e.name}" is a broken link`);
     this.app.flashStatus(`Opening "${e.name}"…`);
-    try {
-      await invoke("open_path", { path: e.path });
-    } catch (err) {
-      this.showMessage(errMsg(err));
+    for (;;) {
+      try {
+        await invoke("open_path", { path: e.path });
+        return;
+      } catch (err) {
+        if (!(await obtainPassword(err))) {
+          if (err?.code !== "passwordRequired") this.showMessage(errMsg(err));
+          return;
+        }
+      }
     }
   }
 

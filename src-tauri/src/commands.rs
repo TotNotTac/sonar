@@ -144,9 +144,7 @@ pub async fn open_dir(
     let (listing, archive) = {
         let path = path.clone();
         tauri::async_runtime::spawn_blocking(move || match sonar_core::archive::split_virtual(&path) {
-            Some((archive, inner)) => {
-                sonar_core::archive::listing(&archive, &inner, &options).map(|l| (l, Some(archive)))
-            }
+            Some((archive, _)) => sonar_core::archive::listing(&path, &options).map(|l| (l, Some(archive))),
             None => sonar_core::list_dir(&path, &options).map(|l| (l, None)),
         })
         .await
@@ -250,13 +248,20 @@ pub async fn open_path(path: PathBuf) -> Result<(), CoreError> {
     tauri::async_runtime::spawn_blocking(move || {
         // A file inside an archive: extract just that file to a temp folder first.
         let real = match sonar_core::archive::split_virtual(&path) {
-            Some((archive, inner)) if !inner.is_empty() => sonar_core::archive::extract_for_opening(&archive, &inner)?,
+            Some((_, inner)) if !inner.is_empty() => sonar_core::archive::extract_for_opening(&path)?,
             _ => path,
         };
         sonar_core::open_path(&real)
     })
     .await
     .map_err(|e| CoreError::InvalidPath(format!("open task failed: {e}")))?
+}
+
+/// Remember the password for an encrypted archive (for this session), after
+/// an operation failed with `passwordRequired`.
+#[tauri::command]
+pub fn set_archive_password(path: PathBuf, password: String) {
+    sonar_core::archive::set_password(&path, &password);
 }
 
 /// Resolve text typed into the editable location bar.

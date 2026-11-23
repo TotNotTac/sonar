@@ -12,12 +12,13 @@
 //! place without overwriting, so cancelling or failing never leaves partial
 //! results or clobbers existing files.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -104,7 +105,44 @@ fn bsdtar() -> Command {
     cmd
 }
 
+// ---------- Passwords ----------
+//
+// Passwords live in memory for the session, keyed by the archive's path as
+// the user sees it (for nested archives, the path through the outer one).
+// bsdtar always gets `--passphrase`: without it, it asks on the terminal and,
+// with no terminal, asks again forever.
+
+/// What bsdtar gets when no password is known: certainly wrong, so encrypted
+/// entries fail with "Incorrect passphrase" instead of prompting.
+const NO_PASSWORD: &str = "sonar-no-password";
+
+fn passwords() -> &'static Mutex<HashMap<PathBuf, String>> {
+    static PASSWORDS: OnceLock<Mutex<HashMap<PathBuf, String>>> = OnceLock::new();
+    PASSWORDS.get_or_init(Default::default)
+}
+
+/// Remember the password for `archive` (a path as shown in the UI).
+pub fn set_password(archive: &Path, password: &str) {
+    passwords().lock().unwrap_or_else(|p| p.into_inner()).insert(archive.to_path_buf(), password.to_string());
+}
+
+fn password_for(virt: &Path) -> Option<String> {
+    passwords().lock().unwrap_or_else(|p| p.into_inner()).get(virt).cloned()
+}
+
+/// bsdtar for reading `real`, which the user knows as `virt`.
+fn bsdtar_reading(virt: &Path) -> Command {
+    let mut cmd = bsdtar();
+    // Note: like other archive front-ends (file-roller passes `-p` to 7z), the
+    // password is on the command line; bsdtar has no other non-interactive way.
+    cmd.arg("--passphrase").arg(password_for(virt).unwrap_or_else(|| NO_PASSWORD.into()));
+    cmd
+}
+
 fn tool_error(archive: &Path, verb: &str, stderr: &str) -> CoreError {
+    if stderr.contains("Incorrect passphrase") || stderr.contains("Passphrase required") {
+        return CoreError::PasswordRequired { archive: archive.to_path_buf(), wrong: password_for(archive).is_some() };
+    }
     let detail = stderr
         .lines()
         .map(|l| l.trim().trim_start_matches("bsdtar: ").to_string())
@@ -132,9 +170,14 @@ fn spawn_error(e: std::io::Error) -> CoreError {
 /// Everything in the archive, with the directory entries archives often
 /// leave out filled in.
 pub fn list(archive: &Path) -> Result<Vec<ArchiveEntry>> {
-    let out = bsdtar().arg("-tvf").arg(archive).output().map_err(spawn_error)?;
+    list_file(archive, archive)
+}
+
+/// [`list`] for the archive file `real`, known to the user as `virt`.
+fn list_file(real: &Path, virt: &Path) -> Result<Vec<ArchiveEntry>> {
+    let out = bsdtar_reading(virt).arg("-tvf").arg(real).output().map_err(spawn_error)?;
     if !out.status.success() {
-        return Err(tool_error(archive, "open", &String::from_utf8_lossy(&out.stderr)));
+        return Err(tool_error(virt, "open", &String::from_utf8_lossy(&out.stderr)));
     }
     Ok(complete_dirs(String::from_utf8_lossy(&out.stdout).lines().filter_map(parse_list_line).collect()))
 }
@@ -268,20 +311,85 @@ pub fn split_virtual(path: &Path) -> Option<(PathBuf, String)> {
     }
 }
 
-/// Listings are cached per archive (path + size + mtime), so moving around
-/// inside a big archive doesn't re-read it every time.
-fn cached_list(archive: &Path) -> Result<std::sync::Arc<Vec<ArchiveEntry>>> {
-    use std::sync::{Arc, Mutex, OnceLock};
-    type Key = (PathBuf, u64, Option<SystemTime>);
-    type Cache = Mutex<Vec<(Key, Arc<Vec<ArchiveEntry>>)>>;
+/// Where a path inside an archive really is: `inner` within the archive
+/// file `real`, which the user knows as `virt`. For archives inside
+/// archives, `real` is a copy of the innermost one in a temporary folder.
+#[derive(Debug)]
+struct Located {
+    real: PathBuf,
+    virt: PathBuf,
+    inner: String,
+}
+
+fn locate(path: &Path) -> Result<Located> {
+    let (archive, inner) = split_virtual(path).ok_or_else(|| CoreError::NotFound(path.to_path_buf()))?;
+    let mut loc = Located { real: archive.clone(), virt: archive, inner };
+    'nested: while !loc.inner.is_empty() {
+        let entries = cached_list(&loc.real, &loc.virt)?;
+        let parts: Vec<&str> = loc.inner.split('/').collect();
+        for i in 1..=parts.len() {
+            let prefix = parts[..i].join("/");
+            if is_archive(parts[i - 1]) && entries.iter().any(|e| e.path == prefix && !e.is_dir) {
+                let real = nested_copy(&loc, &prefix)?;
+                loc = Located { real, virt: loc.virt.join(&prefix), inner: parts[i..].join("/") };
+                continue 'nested;
+            }
+        }
+        break;
+    }
+    Ok(loc)
+}
+
+/// Identifies one version of an archive file (path + size + mtime).
+type FileKey = (PathBuf, u64, Option<SystemTime>);
+
+fn file_key(path: &Path) -> Result<FileKey> {
+    let meta = fs::metadata(path).map_err(|e| CoreError::from_io(path, e))?;
+    Ok((path.to_path_buf(), meta.len(), meta.modified().ok()))
+}
+
+/// Base for Sonar's temporary files of this process.
+fn temp_base(kind: &str) -> Result<PathBuf> {
+    let base = std::env::temp_dir().join(kind).join(std::process::id().to_string());
+    fs::create_dir_all(&base).map_err(|e| CoreError::from_io(&base, e))?;
+    let dest = base.join(TEMP_COUNTER.fetch_add(1, Ordering::Relaxed).to_string());
+    fs::create_dir(&dest).map_err(|e| CoreError::from_io(&dest, e))?;
+    Ok(dest)
+}
+
+/// The archive `inner` of `outer`, extracted once to a temporary folder.
+fn nested_copy(outer: &Located, inner: &str) -> Result<PathBuf> {
+    type Cache = Mutex<HashMap<(FileKey, String), PathBuf>>;
     static CACHE: OnceLock<Cache> = OnceLock::new();
-    let meta = fs::metadata(archive).map_err(|e| CoreError::from_io(archive, e))?;
-    let key: Key = (archive.to_path_buf(), meta.len(), meta.modified().ok());
+    let key = (file_key(&outer.real)?, inner.to_string());
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(hit) = cache.lock().unwrap_or_else(|p| p.into_inner()).get(&key) {
+        if hit.is_file() {
+            return Ok(hit.clone());
+        }
+    }
+    let (dir, name) = inner.rsplit_once('/').unwrap_or(("", inner));
+    let dest = temp_base("sonar-nested")?;
+    let names = [name.to_string()];
+    let created =
+        extract_file(&outer.real, &outer.virt, &dest, Some((dir, &names)), &AtomicBool::new(false), &mut |_, _, _| {})?;
+    let copy =
+        created.unwrap_or_default().into_iter().next().ok_or_else(|| CoreError::NotFound(outer.virt.join(inner)))?;
+    cache.lock().unwrap_or_else(|p| p.into_inner()).insert(key, copy.clone());
+    Ok(copy)
+}
+
+/// Listings are cached per archive file version, so moving around inside a
+/// big archive doesn't re-read it every time.
+fn cached_list(real: &Path, virt: &Path) -> Result<Arc<Vec<ArchiveEntry>>> {
+    type Cache = Mutex<Vec<(FileKey, Arc<Vec<ArchiveEntry>>)>>;
+    static CACHE: OnceLock<Cache> = OnceLock::new();
+    let key = file_key(real)?;
     let cache = CACHE.get_or_init(Default::default);
     if let Some((_, hit)) = cache.lock().unwrap_or_else(|p| p.into_inner()).iter().find(|(k, _)| *k == key) {
         return Ok(hit.clone());
     }
-    let entries = Arc::new(list(archive)?);
+    let entries = Arc::new(list_file(real, virt)?);
     let mut c = cache.lock().unwrap_or_else(|p| p.into_inner());
     c.retain(|(k, _)| k.0 != key.0);
     c.push((key, entries.clone()));
@@ -291,12 +399,15 @@ fn cached_list(archive: &Path) -> Result<std::sync::Arc<Vec<ArchiveEntry>>> {
     Ok(entries)
 }
 
-/// A folder listing for `inner` inside `archive` (read-only). Paths of the
-/// entries continue the archive's path, so they can be navigated into.
-pub fn listing(archive: &Path, inner: &str, opts: &crate::ListOptions) -> Result<crate::Listing> {
+/// A read-only folder listing for `path`: an archive, a folder inside one,
+/// or an archive inside an archive. Entry paths continue `path`, so they can
+/// be navigated into.
+pub fn listing(path: &Path, opts: &crate::ListOptions) -> Result<crate::Listing> {
     use crate::entry::{Entry, EntryKind};
-    let all = cached_list(archive)?;
-    let here = if inner.is_empty() { archive.to_path_buf() } else { archive.join(inner) };
+    let loc = locate(path)?;
+    let all = cached_list(&loc.real, &loc.virt)?;
+    let inner = loc.inner.as_str();
+    let here = path.to_path_buf();
     if !inner.is_empty() && !all.iter().any(|e| e.path == inner && e.is_dir) {
         return Err(CoreError::NotFound(here));
     }
@@ -321,7 +432,7 @@ pub fn listing(archive: &Path, inner: &str, opts: &crate::ListOptions) -> Result
             type_id: ft.type_id,
             icon_key: ft.icon_key,
             thumbnail: false,
-            archive: false,
+            archive: !e.is_dir && is_archive(&name),
             is_symlink: false,
             is_hidden,
             readonly: true,
@@ -340,19 +451,16 @@ pub fn listing(archive: &Path, inner: &str, opts: &crate::ListOptions) -> Result
     })
 }
 
-/// Extract one file from an archive into a private temporary folder (to open
-/// it with its app), returning the extracted path.
-pub fn extract_for_opening(archive: &Path, inner: &str) -> Result<PathBuf> {
-    let (dir, name) = inner.rsplit_once('/').unwrap_or(("", inner));
-    let base = std::env::temp_dir().join("sonar-open").join(format!("{}", std::process::id()));
-    fs::create_dir_all(&base).map_err(|e| CoreError::from_io(&base, e))?;
-    let n = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dest = base.join(n.to_string());
-    fs::create_dir(&dest).map_err(|e| CoreError::from_io(&dest, e))?;
-    let names = [name.to_string()];
-    let created =
-        extract(archive, &dest, Some((dir, &names)), &AtomicBool::new(false), &mut |_, _, _| {})?.unwrap_or_default();
-    created.into_iter().next().ok_or_else(|| CoreError::NotFound(archive.join(inner)))
+/// Extract one file inside an archive (`/x/a.zip/dir/file.txt`) into a
+/// private temporary folder, to open it with its app. Returns the copy.
+pub fn extract_for_opening(path: &Path) -> Result<PathBuf> {
+    let (parent, name) = match (path.parent(), path.file_name()) {
+        (Some(p), Some(n)) => (p, n.to_string_lossy().into_owned()),
+        _ => return Err(CoreError::NotFound(path.to_path_buf())),
+    };
+    let dest = temp_base("sonar-open")?;
+    let created = extract_items(parent, &[name], &dest, &AtomicBool::new(false), &mut |_, _, _| {})?;
+    created.unwrap_or_default().into_iter().next().ok_or_else(|| CoreError::NotFound(path.to_path_buf()))
 }
 
 // ---------- Extract / compress ----------
@@ -384,6 +492,15 @@ fn run_with_progress(mut cmd: Command, total: u64, cancel: &AtomicBool, progress
         }
         if let Some(name) = line.strip_prefix("x ").or_else(|| line.strip_prefix("a ")) {
             done += 1;
+            // "x name: Incorrect passphrase" is an error on a progress line.
+            let name = match name.find(": Incorrect passphrase").or_else(|| name.find(": Passphrase required")) {
+                Some(at) => {
+                    log.push_str(&name[at + 2..]);
+                    log.push('\n');
+                    &name[..at]
+                }
+                None => name,
+            };
             progress(done.min(total), total, name.trim_start_matches("./"));
         } else {
             log.push_str(&line);
@@ -400,24 +517,51 @@ fn run_with_progress(mut cmd: Command, total: u64, cancel: &AtomicBool, progress
     Ok(Some(log))
 }
 
-/// Extract into `dest_dir` and return the top-level items created.
-///
-/// - `select = None`: the whole archive, Ark-style: a single top-level item
-///   lands directly in `dest_dir`; several land in a new folder named after
-///   the archive.
-/// - `select = Some((dir, names))`: only those entries of the archive folder
-///   `dir`, each placed directly in `dest_dir`.
+/// Extract a whole archive into `dest_dir` and return the top-level items
+/// created, Ark-style: a single top-level item lands directly in `dest_dir`;
+/// several land in a new folder named after the archive. `archive` may be
+/// inside another archive.
 ///
 /// Name clashes get "name (1)" instead of overwriting. Returns `Ok(None)` if
 /// cancelled (nothing is left behind).
 pub fn extract(
     archive: &Path,
     dest_dir: &Path,
+    cancel: &AtomicBool,
+    progress: Progress,
+) -> Result<Option<Vec<PathBuf>>> {
+    let loc = locate(archive)?;
+    if !loc.inner.is_empty() {
+        return Err(CoreError::Other(format!("\"{}\" is not an archive", file_name(archive))));
+    }
+    extract_file(&loc.real, &loc.virt, dest_dir, None, cancel, progress)
+}
+
+/// Extract the entries `names` of the archive folder `dir` (an archive, a
+/// folder inside one, or a nested archive) directly into `dest_dir`.
+pub fn extract_items(
+    dir: &Path,
+    names: &[String],
+    dest_dir: &Path,
+    cancel: &AtomicBool,
+    progress: Progress,
+) -> Result<Option<Vec<PathBuf>>> {
+    let loc = locate(dir)?;
+    extract_file(&loc.real, &loc.virt, dest_dir, Some((&loc.inner, names)), cancel, progress)
+}
+
+/// - `select = None`: the whole archive (see [`extract`]).
+/// - `select = Some((dir, names))`: only those entries of the archive folder
+///   `dir`, each placed directly in `dest_dir`.
+fn extract_file(
+    archive: &Path,
+    virt: &Path,
+    dest_dir: &Path,
     select: Option<(&str, &[String])>,
     cancel: &AtomicBool,
     progress: Progress,
 ) -> Result<Option<Vec<PathBuf>>> {
-    let entries = list(archive)?;
+    let entries = cached_list(archive, virt)?;
     let patterns: Vec<String> = match select {
         Some((dir, names)) => {
             names.iter().map(|n| if dir.is_empty() { n.clone() } else { format!("{dir}/{n}") }).collect()
@@ -436,12 +580,12 @@ pub fn extract(
         let _ = fs::remove_dir_all(&tmp);
         r
     };
-    let mut cmd = bsdtar();
+    let mut cmd = bsdtar_reading(virt);
     cmd.arg("-xvf").arg(archive).arg("-C").arg(&tmp).args(&patterns);
     match run_with_progress(cmd, total, cancel, progress) {
         Ok(Some(_)) => {}
         Ok(None) => return cleanup(Ok(None)),
-        Err(CoreError::Other(log)) => return cleanup(Err(tool_error(archive, "extract", &log))),
+        Err(CoreError::Other(log)) => return cleanup(Err(tool_error(virt, "extract", &log))),
         Err(e) => return cleanup(Err(e)),
     }
 
@@ -466,7 +610,7 @@ pub fn extract(
             match roots.as_slice() {
                 [only] => place(&only.path(), &only.file_name().to_string_lossy()),
                 _ => {
-                    let folder = stem(&file_name(archive)).to_string();
+                    let folder = stem(&file_name(virt)).to_string();
                     place(&tmp, &folder)
                 }
             }
@@ -662,14 +806,14 @@ mod tests {
         fs::create_dir(&out).unwrap();
 
         // One top-level folder: extracted as is.
-        let a = extract(&single, &out, None, &AtomicBool::new(false), &mut noop()).unwrap().unwrap();
+        let a = extract(&single, &out, &AtomicBool::new(false), &mut noop()).unwrap().unwrap();
         assert_eq!(a, [out.join("photos")]);
         assert_eq!(fs::read(out.join("photos/2025/ü beach.jpg")).unwrap(), b"jpg");
         // Again: never overwrites.
-        let b = extract(&single, &out, None, &AtomicBool::new(false), &mut noop()).unwrap().unwrap();
+        let b = extract(&single, &out, &AtomicBool::new(false), &mut noop()).unwrap().unwrap();
         assert_eq!(b, [out.join("photos (1)")]);
         // Several top-level items: into a folder named after the archive.
-        let c = extract(&multi, &out, None, &AtomicBool::new(false), &mut noop()).unwrap().unwrap();
+        let c = extract(&multi, &out, &AtomicBool::new(false), &mut noop()).unwrap().unwrap();
         assert_eq!(c, [out.join("bundle")]);
         assert!(out.join("bundle/notes.txt").is_file() && out.join("bundle/photos/readme.txt").is_file());
         let leftovers: Vec<_> = fs::read_dir(&out)
@@ -700,25 +844,26 @@ mod tests {
 
         // Folder listings inside the archive.
         let opts = crate::ListOptions::default();
-        let root = listing(&zip, "", &opts).unwrap();
+        let root = listing(&zip, &opts).unwrap();
         assert_eq!(root.path, zip);
         assert_eq!(root.entries.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["photos"]);
         assert_eq!(root.entries[0].child_count, Some(2));
-        let sub = listing(&zip, "photos", &opts).unwrap();
+        let sub = listing(&zip.join("photos"), &opts).unwrap();
         assert_eq!(sub.entries.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["2025", "readme.txt"]);
         assert_eq!(sub.entries[1].path, zip.join("photos/readme.txt"));
         assert_eq!(sub.entries[1].size, Some(5));
         assert!(sub.entries.iter().all(|e| e.readonly));
         assert_eq!(sub.parent.as_deref(), Some(zip.as_path()));
-        assert!(matches!(listing(&zip, "nope", &opts), Err(CoreError::NotFound(_))));
-        let opened = extract_for_opening(&zip, "photos/readme.txt").unwrap();
+        assert!(matches!(listing(&zip.join("nope"), &opts), Err(CoreError::NotFound(_))));
+        let opened = extract_for_opening(&zip.join("photos/readme.txt")).unwrap();
         assert_eq!(fs::read(&opened).unwrap(), b"hello");
 
         // Copying entries out of the browsed folder "photos".
         let out = d.path().join("out");
         fs::create_dir(&out).unwrap();
         let names = vec!["2025".to_string(), "readme.txt".to_string()];
-        let got = extract(&zip, &out, Some(("photos", &names)), &AtomicBool::new(false), &mut noop()).unwrap().unwrap();
+        let got =
+            extract_items(&zip.join("photos"), &names, &out, &AtomicBool::new(false), &mut noop()).unwrap().unwrap();
         assert_eq!(got, [out.join("2025"), out.join("readme.txt")]);
         assert_eq!(fs::read(out.join("2025/ü beach.jpg")).unwrap(), b"jpg");
     }
@@ -731,15 +876,88 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let bad = d.path().join("broken.zip");
         fs::write(&bad, b"this is not a zip").unwrap();
-        let err = extract(&bad, d.path(), None, &AtomicBool::new(false), &mut noop()).unwrap_err().to_string();
+        let err = extract(&bad, d.path(), &AtomicBool::new(false), &mut noop()).unwrap_err().to_string();
         assert!(err.starts_with("Could not open \"broken.zip\": ") && err.contains("format"), "{err}");
         assert_eq!(fs::read_dir(d.path()).unwrap().count(), 1, "nothing left behind");
 
         let (d2, src) = fixture();
         let zip = d2.path().join("x.zip");
         compress(&[src.join("photos")], &zip, Format::Zip, &AtomicBool::new(false), &mut noop()).unwrap();
-        let cancelled = extract(&zip, d2.path(), None, &AtomicBool::new(true), &mut noop()).unwrap();
+        let cancelled = extract(&zip, d2.path(), &AtomicBool::new(true), &mut noop()).unwrap();
         assert_eq!(cancelled, None);
         assert!(!d2.path().join("photos").exists());
+    }
+
+    #[test]
+    fn password_protected_archives() {
+        if !have_bsdtar() {
+            return;
+        }
+        let (d, src) = fixture();
+        let zip = d.path().join("secret.zip");
+        let ok = Command::new(BSDTAR)
+            .args(["--format", "zip", "--options", "zip:encryption=aes256", "--passphrase", "hunter2", "-cf"])
+            .arg(&zip)
+            .arg("-C")
+            .arg(&src)
+            .arg("photos")
+            .status()
+            .unwrap();
+        assert!(ok.success());
+        let out = d.path().join("out");
+        fs::create_dir(&out).unwrap();
+
+        // Listing works without the password; extracting fails quickly
+        // instead of bsdtar waiting for one on the terminal.
+        assert!(listing(&zip.join("photos"), &crate::ListOptions::default()).is_ok());
+        let err = extract(&zip, &out, &AtomicBool::new(false), &mut noop()).unwrap_err();
+        assert!(matches!(&err, CoreError::PasswordRequired { archive, wrong: false } if *archive == zip), "{err:?}");
+        assert_eq!(err.to_string(), "\"secret.zip\" is password protected");
+        assert!(matches!(extract_for_opening(&zip.join("photos/readme.txt")), Err(CoreError::PasswordRequired { .. })));
+
+        set_password(&zip, "wrong");
+        let err = extract(&zip, &out, &AtomicBool::new(false), &mut noop()).unwrap_err();
+        assert!(matches!(err, CoreError::PasswordRequired { wrong: true, .. }), "{err:?}");
+        assert_eq!(fs::read_dir(&out).unwrap().count(), 0, "nothing left behind");
+
+        set_password(&zip, "hunter2");
+        let got = extract(&zip, &out, &AtomicBool::new(false), &mut noop()).unwrap().unwrap();
+        assert_eq!(got, [out.join("photos")]);
+        assert_eq!(fs::read(out.join("photos/readme.txt")).unwrap(), b"hello");
+        assert_eq!(fs::read(extract_for_opening(&zip.join("photos/readme.txt")).unwrap()).unwrap(), b"hello");
+    }
+
+    #[test]
+    fn archives_inside_archives() {
+        if !have_bsdtar() {
+            return;
+        }
+        let (d, src) = fixture();
+        let inner = src.join("inner.tar.gz");
+        compress(&[src.join("photos")], &inner, Format::TarGz, &AtomicBool::new(false), &mut noop()).unwrap();
+        fs::create_dir(src.join("bundle")).unwrap();
+        fs::rename(&inner, src.join("bundle/inner.tar.gz")).unwrap();
+        let outer = d.path().join("outer.zip");
+        compress(&[src.join("bundle")], &outer, Format::Zip, &AtomicBool::new(false), &mut noop()).unwrap();
+
+        let opts = crate::ListOptions::default();
+        let bundle = listing(&outer.join("bundle"), &opts).unwrap();
+        assert_eq!(bundle.entries.len(), 1);
+        assert!(bundle.entries[0].archive, "nested archives can be browsed into");
+        let nested = outer.join("bundle/inner.tar.gz");
+        let root = listing(&nested, &opts).unwrap();
+        assert_eq!(root.path, nested);
+        assert_eq!(root.entries.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["photos"]);
+        let sub = listing(&nested.join("photos"), &opts).unwrap();
+        assert_eq!(sub.entries[1].path, nested.join("photos/readme.txt"));
+        assert_eq!(fs::read(extract_for_opening(&nested.join("photos/readme.txt")).unwrap()).unwrap(), b"hello");
+
+        let out = d.path().join("out");
+        fs::create_dir(&out).unwrap();
+        let names = vec!["readme.txt".to_string()];
+        let got = extract_items(&nested.join("photos"), &names, &out, &AtomicBool::new(false), &mut noop()).unwrap();
+        assert_eq!(got.unwrap(), [out.join("readme.txt")]);
+        let whole = extract(&nested, &out, &AtomicBool::new(false), &mut noop()).unwrap().unwrap();
+        assert_eq!(whole, [out.join("photos")]);
     }
 }

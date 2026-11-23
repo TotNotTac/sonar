@@ -4,7 +4,8 @@ A file manager inspired by KDE Dolphin, built with Tauri 2 and Rust. Targets mac
 
 **Status:** browsing, live updates, opening files, and file operations (rename, new folder, trash, delete, copy/cut/paste with progress and conflict handling, undo), drag and drop (within Sonar and with other apps),
 the system clipboard, tabs, split view and rubber-band selection, OS file types and icons, image thumbnails,
-disk usage and mount/eject in the sidebar, a native menu bar on macOS, and archives (browse, extract, compress).
+disk usage and mount/eject in the sidebar, a native menu bar on macOS, archives (browse, extract, compress,
+passwords, archives inside archives), fuzzy search, Properties, Open With, and an editable Places sidebar.
 
 ## Layout
 
@@ -19,7 +20,10 @@ crates/sonar-core/      UI-agnostic filesystem model (no Tauri dependency)
   src/clipboard.rs      file-list formats: file:// URIs, uri-list, GNOME/KDE cut markers
   src/thumbnail.rs      image thumbnails, cached per the freedesktop thumbnail spec
   src/volumes.rs        parsing lsblk / udisksctl output (removable media on Linux)
-  src/archive.rs        archives via bsdtar (libarchive): list, browse, extract, compress
+  src/archive.rs        archives via bsdtar (libarchive): list, browse, extract, compress, passwords, nesting
+  src/search.rs         recursive fuzzy search (fzf's algorithm via nucleo-matcher), streamed in batches
+  src/properties.rs     Properties: type, sizes, dates, owner, permissions; live folder size totals
+  src/desktop.rs        freedesktop .desktop files: parsing, Exec= field-code expansion (Open With on Linux)
   src/filetype.rs       extension-based type labels and icon hints
   src/watch.rs          debounced folder watcher (FSEvents / inotify via `notify`)
   src/ops/              file operations
@@ -45,7 +49,10 @@ ui/                     static frontend, native ES modules (no bundler)
   js/ops.js             file operations, jobs panel, conflict dialog, undo
   js/menu.js            HTML context menus (+ contextmenus.js for their contents)
   js/dnd.js             drag and drop: in-window, out to other apps, and drops from them
-  js/store.js           settings, per-folder view properties
+  js/store.js           settings, per-folder view properties, Places customisations
+  js/properties.js      Properties dialog
+  js/openwith.js        Open With: app chooser, "always use" for a file type
+  js/password.js        password prompt for encrypted archives
 ```
 
 ## Prerequisites
@@ -140,6 +147,9 @@ it's always installed since pacman depends on it; Debian/Ubuntu: `libarchive-too
 - **Extract Here** (context menu): a single top-level folder is extracted as is; several items go into a
   new folder named after the archive. Nothing is ever overwritten. With split view, **Extract to** the other side.
 - **Compress** (context menu): zip, 7z, tar.gz, tar.xz or tar.bz2, next to the selection.
+- **Password-protected** zips ask for the password when it's needed (browsing works without it), and again if
+  it's wrong. Passwords are remembered until Sonar quits. (libarchive can't decrypt encrypted 7z or RAR.)
+- **Archives inside archives** open like folders too: the inner archive is extracted to a temporary folder.
 
 Extracting and compressing run as background jobs with progress, cancel and undo.
 
@@ -151,7 +161,9 @@ panel; name clashes ask Skip / Keep Both / Replace (or Merge for folders), optio
 | Action | Linux | macOS |
 |---|---|---|
 | Icons / Details view | Ctrl+1 / Ctrl+3 | ⌘1 / ⌘2 |
-| Filter current folder | Ctrl+I | ⌘F |
+| Search this folder and below | Ctrl+F | ⌘F |
+| Filter current folder | Ctrl+I | ⌘⌥F |
+| Properties | Alt+Enter | ⌘I, ⌥Enter |
 | Split view on/off | F3 | F3 |
 | New tab / Close tab | Ctrl+T / Ctrl+W | ⌘T / ⌘W |
 | Reopen closed tab | Ctrl+Shift+T | ⌘⇧T |
@@ -167,3 +179,14 @@ places, breadcrumbs or tabs for context menus. View mode and sort order are reme
 visibility is global.
 
 Type a few letters to jump to a matching entry. Mouse back/forward buttons also work.
+
+### Search, Properties, Open With, Places
+
+- **Search** matches names fuzzily, like fzf (`rep2025` finds `report-2025.pdf`; `docs/rep` matches the
+  path), best matches first, streaming in while it searches. `*` and `?` switch to glob matching. Results
+  show their folder; Enter/double-click opens, and "Open Containing Folder" jumps there.
+- **Properties** shows type, size (folders are counted live), dates, owner, permissions and link targets.
+- **Open With** (context menu) lists the apps registered for the file type; "Other Application…" opens a chooser
+  that can also make the choice the default for that type.
+- **Places**: drag folders onto the sidebar or use "Add to Places"; right-click a place to rename, hide or
+  remove it; drag places to reorder. "Show Hidden Places" and "Reset Places" are on the sidebar's menu.

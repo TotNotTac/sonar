@@ -148,3 +148,51 @@ test("opening a file inside an archive", async ({ page }) => {
   await item(pane, "readme.txt").dblclick();
   await expect.poll(() => mock(page, () => window.__mock.opened)).toEqual([`${DL}/photos.zip/photos/readme.txt`]);
 });
+
+test("password-protected archives ask for the password, again if it's wrong", async ({ page }) => {
+  const pane = activePane(page);
+  await item(pane, "secret.zip").click({ button: "right" });
+  await page.locator(".menu-item", { hasText: "Extract Here" }).click();
+  const dlg = page.locator(".password-dialog");
+  await expect(dlg.locator(".dialog-title")).toHaveText("“secret.zip” is password protected");
+  await dlg.locator("input").fill("nope");
+  await page.keyboard.press("Enter");
+  await expect(dlg.locator(".dialog-message")).toHaveText("That password is not correct. Try again.");
+  await dlg.locator("input").fill("hunter2");
+  await dlg.locator(".btn.primary").click();
+  await expect(item(pane, "secret")).toHaveClass(/selected/);
+  expect(await exists(page, `${DL}/secret/plan.txt`)).toBe(true);
+});
+
+test("cancelling the password prompt cancels the job", async ({ page }) => {
+  const pane = activePane(page);
+  await item(pane, "secret.zip").dblclick(); // listing needs no password
+  await item(pane, "plan.txt").dblclick();
+  await expect(page.locator(".password-dialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".password-dialog")).toHaveCount(0);
+  expect(await mock(page, () => window.__mock.opened)).toEqual([]);
+  await expect(pane.locator(".message:visible")).toHaveCount(0);
+
+  await item(pane, "plan.txt").click();
+  await page.keyboard.press(keys.mod("c"));
+  await page.locator(".place", { hasText: "Documents" }).click();
+  await page.keyboard.press(keys.mod("v"));
+  await page.locator(".password-dialog .btn", { hasText: "Cancel" }).click();
+  await expect(status(page)).toHaveText("Copy cancelled");
+  expect(await exists(page, `${HOME}/Documents/plan.txt`)).toBe(false);
+});
+
+test("archives inside archives open like folders, after the outer password", async ({ page }) => {
+  const pane = activePane(page);
+  await item(pane, "secret.zip").dblclick();
+  await item(pane, "inner.tar.gz").dblclick();
+  await page.locator(".password-dialog input").fill("hunter2");
+  await page.keyboard.press("Enter");
+  await expectPath(page, `${DL}/secret.zip/inner.tar.gz`);
+  await expect(crumbs(page)).toHaveText(["Home", "Downloads", "secret.zip", "inner.tar.gz"]);
+  await item(pane, "deep").dblclick();
+  await item(pane, "treasure.txt").dblclick();
+  await expect.poll(() => mock(page, () => window.__mock.opened)).toEqual([`${DL}/secret.zip/inner.tar.gz/deep/treasure.txt`]);
+  await expect(page.locator(".password-dialog")).toHaveCount(0); // remembered
+});

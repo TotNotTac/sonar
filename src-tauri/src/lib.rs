@@ -51,6 +51,7 @@ pub fn run() {
             commands::eject_volume,
             commands::open_path,
             commands::resolve_path,
+            commands::set_archive_password,
             commands::home_dir,
             open::take_open_requests,
             ops::rename_entry,

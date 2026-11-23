@@ -30,6 +30,11 @@ pub enum CoreError {
     #[error("{0}")]
     Other(String),
 
+    /// An encrypted archive needs a (different) password: see
+    /// `archive::set_password`. `archive` is the path the user sees.
+    #[error("{}", password_message(archive, *wrong))]
+    PasswordRequired { archive: PathBuf, wrong: bool },
+
     #[error("Could not open \"{}\": {message}", path.display())]
     Open { path: PathBuf, message: String },
 
@@ -65,10 +70,19 @@ impl CoreError {
             Self::InvalidName(_) => "invalidName",
             Self::AlreadyExists(_) => "alreadyExists",
             Self::Other(_) => "other",
+            Self::PasswordRequired { .. } => "passwordRequired",
             Self::Open { .. } => "open",
             Self::Watch { .. } => "watch",
             Self::Io { .. } => "io",
         }
+    }
+}
+
+fn password_message(archive: &Path, wrong: bool) -> String {
+    if wrong {
+        format!("Wrong password for \"{}\"", display_name(archive))
+    } else {
+        format!("\"{}\" is password protected", display_name(archive))
     }
 }
 
@@ -83,6 +97,10 @@ impl Serialize for CoreError {
         let mut st = s.serialize_struct("CoreError", 2)?;
         st.serialize_field("code", self.code())?;
         st.serialize_field("message", &self.to_string())?;
+        if let Self::PasswordRequired { archive, wrong } = self {
+            st.serialize_field("path", archive)?;
+            st.serialize_field("wrong", wrong)?;
+        }
         st.end()
     }
 }

@@ -5,6 +5,7 @@
 import { ask } from "./dialog.js";
 import { Fmt } from "./format.js";
 import { basename, el, errMsg, invoke, isMac, isMod, listen, modLabel, parentOf, plural } from "./util.js";
+import { obtainPassword } from "./password.js";
 
 export class Ops {
   constructor(app) {
@@ -217,7 +218,8 @@ export class Ops {
     const id = await invoke("start_transfer", { request: { kind, sources, destDir } });
     const verb = kind === "move" ? "Moving" : fromArchive ? "Extracting" : "Copying";
     const what = describePaths(sources);
-    this.trackJob(id, { kind, what, destDir, title: `${verb} ${what} to “${this.app.folderLabel(destDir)}”`, ...meta });
+    const retry = () => this.startJob(kind, sources, destDir, meta);
+    this.trackJob(id, { kind, what, destDir, title: `${verb} ${what} to “${this.app.folderLabel(destDir)}”`, retry, ...meta });
   }
 
   /** Show a started backend job in the jobs panel. */
@@ -258,10 +260,15 @@ export class Ops {
   /** "Extract Here" (or into `destDir`) for the selected archives. */
   async extract(pane = this.pane, destDir = null) {
     const archives = pane.selectedEntries().filter((e) => e.archive).map((e) => e.path);
-    if (!archives.length) return;
+    if (archives.length) await this.extractArchives(archives, destDir, pane);
+  }
+
+  async extractArchives(archives, destDir, pane) {
     const id = await invoke("start_extract", { archives, destDir });
     const where = destDir ?? pane.path;
-    this.trackJob(id, { kind: "extract", what: describePaths(archives), destDir: where, pane, title: `Extracting ${describePaths(archives)}` });
+    // After a password prompt, carry on from the archive that needed it.
+    const retry = (from) => this.extractArchives(archives.slice(Math.max(0, archives.indexOf(from))), destDir, pane);
+    this.trackJob(id, { kind: "extract", what: describePaths(archives), destDir: where, pane, retry, title: `Extracting ${describePaths(archives)}` });
   }
 
   /** Extract selected items of a browsed archive next to the archive. */
@@ -313,6 +320,14 @@ export class Ops {
       invoke("clipboard_clear_cut").catch(() => {});
     }
     const noun = { move: "Move", copy: "Copy", extract: "Extraction", compress: "Compression" }[result.kind] ?? "Job";
+    if (result.needsPassword) {
+      const need = result.needsPassword;
+      obtainPassword(need).then((retry) => {
+        if (retry) job.retry?.(need.path);
+        else this.app.flashStatus(`${noun} cancelled`);
+      });
+      if (!result.completed) return;
+    }
     if (result.errors.length) {
       this.pane.showMessage(summarizeErrors(result.errors));
     } else if (result.cancelled) {
