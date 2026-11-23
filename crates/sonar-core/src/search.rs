@@ -181,14 +181,14 @@ pub fn search(
             if ft.is_dir() && !skip.contains(&path) {
                 queue.push_back(path); // symlinks report !is_dir() here: not followed
             }
-            if let Some(score) = score {
-                if let Some(entry) = Entry::from_dir_entry(&de, &rules, false) {
-                    batch.push(Hit { entry, score });
-                    summary.found += 1;
-                    if summary.found >= MAX_RESULTS {
-                        summary.truncated = true;
-                        break 'walk;
-                    }
+            if let Some(score) = score
+                && let Some(entry) = Entry::from_dir_entry(&de, &rules, false)
+            {
+                batch.push(Hit { entry, score });
+                summary.found += 1;
+                if summary.found >= MAX_RESULTS {
+                    summary.truncated = true;
+                    break 'walk;
                 }
             }
         }

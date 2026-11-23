@@ -28,11 +28,7 @@ pub fn validate_name(name: &str) -> Result<()> {
 /// `name` may be [`crate::uipath`]-encoded.
 pub fn available_name(dir: &Path, name: &str, is_dir: bool) -> PathBuf {
     let p = dir.join(crate::uipath::decode(name));
-    if exists(&p) {
-        keep_both_name(dir, name, is_dir)
-    } else {
-        p
-    }
+    if exists(&p) { keep_both_name(dir, name, is_dir) } else { p }
 }
 
 /// First free name of the form `stem (n).ext` in `dir`, KIO-style.

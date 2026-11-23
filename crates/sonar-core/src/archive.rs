@@ -340,7 +340,7 @@ fn complete_dirs(entries: Vec<ArchiveEntry>) -> Vec<ArchiveEntry> {
 }
 
 /// Direct children of `dir` ("" for the root) within a full listing.
-pub fn children<'a>(entries: &'a [ArchiveEntry], dir: &str) -> impl Iterator<Item = &'a ArchiveEntry> {
+pub fn children<'a>(entries: &'a [ArchiveEntry], dir: &str) -> impl Iterator<Item = &'a ArchiveEntry> + use<'a> {
     let prefix = if dir.is_empty() { String::new() } else { format!("{dir}/") };
     entries.iter().filter(move |e| {
         e.path.strip_prefix(prefix.as_str()).is_some_and(|rest| !rest.is_empty() && !rest.contains('/'))
@@ -426,10 +426,10 @@ fn nested_copy(outer: &Located, inner: &str) -> Result<PathBuf> {
     static CACHE: OnceLock<Cache> = OnceLock::new();
     let key = (file_key(&outer.real)?, inner.to_string());
     let cache = CACHE.get_or_init(Default::default);
-    if let Some(hit) = cache.lock().unwrap_or_else(|p| p.into_inner()).get(&key) {
-        if hit.is_file() {
-            return Ok(hit.clone());
-        }
+    if let Some(hit) = cache.lock().unwrap_or_else(|p| p.into_inner()).get(&key)
+        && hit.is_file()
+    {
+        return Ok(hit.clone());
     }
     let (dir, name) = inner.rsplit_once('/').unwrap_or(("", inner));
     let dest = temp_base("sonar-nested")?;
@@ -662,11 +662,7 @@ fn extract_file(
     let result = match select {
         Some((dir, names)) => names.iter().try_for_each(|n| {
             let src = tmp.join(crate::uipath::decode(dir)).join(crate::uipath::decode(n));
-            if fs::symlink_metadata(&src).is_ok() {
-                place(&src, n)
-            } else {
-                Ok(())
-            }
+            if fs::symlink_metadata(&src).is_ok() { place(&src, n) } else { Ok(()) }
         }),
         None => {
             let roots: Vec<_> = fs::read_dir(&tmp).map_err(|e| CoreError::from_io(&tmp, e))?.flatten().collect();
@@ -730,10 +726,10 @@ fn count_items(path: &Path) -> u64 {
     let mut stack = vec![path.to_path_buf()];
     while let Some(p) = stack.pop() {
         n += 1;
-        if fs::symlink_metadata(&p).is_ok_and(|m| m.is_dir()) {
-            if let Ok(rd) = fs::read_dir(&p) {
-                stack.extend(rd.flatten().map(|e| e.path()));
-            }
+        if fs::symlink_metadata(&p).is_ok_and(|m| m.is_dir())
+            && let Ok(rd) = fs::read_dir(&p)
+        {
+            stack.extend(rd.flatten().map(|e| e.path()));
         }
     }
     n

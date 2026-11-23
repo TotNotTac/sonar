@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use sonar_core::platform::{self, Icon};
-use tauri::http::{header, Request, Response, StatusCode};
+use tauri::http::{Request, Response, StatusCode, header};
 use tauri::{Runtime, UriSchemeContext, UriSchemeResponder};
 
 pub const SCHEME: &str = "sonar";

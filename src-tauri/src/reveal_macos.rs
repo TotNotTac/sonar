@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol};
-use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly};
+use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_foundation::{NSAppleEventDescriptor, NSAppleEventManager};
 use tauri::AppHandle;
 

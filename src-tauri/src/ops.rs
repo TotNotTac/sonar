@@ -8,10 +8,10 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
+use sonar_core::CoreError;
 use sonar_core::archive;
 use sonar_core::ops::{self, Conflict, ConflictChoice, Progress, TransferKind, TransferObserver, UndoAction};
 use sonar_core::uipath::{self, UiPath};
-use sonar_core::CoreError;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 pub const EVENT_JOB_PROGRESS: &str = "job-progress";

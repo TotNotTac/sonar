@@ -6,7 +6,7 @@ use std::sync::{Mutex, OnceLock};
 
 use xdg_mime::SharedMimeInfo;
 
-use super::{cstring, AppInfo, Icon, NativeType};
+use super::{AppInfo, Icon, NativeType, cstring};
 use crate::entry::EntryKind;
 use crate::error::{CoreError, Result};
 use crate::mimeglob::GlobIndex;
@@ -528,12 +528,11 @@ fn ini_value(ini: &str, section: &str, key: &str) -> Option<String> {
     for line in ini.lines().map(str::trim) {
         if line.starts_with('[') {
             in_section = line == format!("[{section}]");
-        } else if in_section {
-            if let Some((k, v)) = line.split_once('=') {
-                if k.trim() == key {
-                    return Some(v.trim().to_string()).filter(|v| !v.is_empty());
-                }
-            }
+        } else if in_section
+            && let Some((k, v)) = line.split_once('=')
+            && k.trim() == key
+        {
+            return Some(v.trim().to_string()).filter(|v| !v.is_empty());
         }
     }
     None

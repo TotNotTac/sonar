@@ -25,12 +25,12 @@ pub mod uipath;
 pub mod volumes;
 pub mod watch;
 
-pub use breadcrumb::{breadcrumbs, Crumb};
+pub use breadcrumb::{Crumb, breadcrumbs};
 pub use entry::{Entry, EntryKind};
 pub use error::{CoreError, Result};
-pub use listing::{child_count, list_dir, ListOptions, Listing};
+pub use listing::{ListOptions, Listing, child_count, list_dir};
 pub use paths::resolve_user_path;
-pub use places::{places, Place, PlaceSection};
+pub use places::{Place, PlaceSection, places};
 pub use platform::open_path;
 pub use sort::{SortKey, SortOrder, SortSpec};
 pub use watch::DirWatcher;

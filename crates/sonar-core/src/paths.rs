@@ -20,11 +20,7 @@ pub fn resolve_user_path(input: &str, cwd: &Path) -> Result<PathBuf> {
         PathBuf::from(rest)
     } else {
         let p = PathBuf::from(input);
-        if p.is_absolute() {
-            p
-        } else {
-            cwd.join(p)
-        }
+        if p.is_absolute() { p } else { cwd.join(p) }
     };
     Ok(normalize(&raw))
 }

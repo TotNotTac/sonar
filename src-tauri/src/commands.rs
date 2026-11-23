@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use sonar_core::uipath::{self, UiPath};
-use sonar_core::{breadcrumbs, CoreError, Crumb, DirWatcher, ListOptions, Listing, Place, SortKey};
+use sonar_core::{CoreError, Crumb, DirWatcher, ListOptions, Listing, Place, SortKey, breadcrumbs};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Emitted when the folder a pane shows changes on disk.

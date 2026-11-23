@@ -58,12 +58,11 @@ fn thumbnail_in(cache: Option<&Path>, path: &Path, size: u32) -> Result<Vec<u8>>
     let (bucket_dir, px) = bucket(size);
     let cached = cache.map(|c| c.join(bucket_dir).join(format!("{}.png", md5_hex(&uri))));
 
-    if let Some(file) = &cached {
-        if let Ok(bytes) = fs::read(file) {
-            if is_fresh(&bytes, &uri, mtime) {
-                return Ok(bytes);
-            }
-        }
+    if let Some(file) = &cached
+        && let Ok(bytes) = fs::read(file)
+        && is_fresh(&bytes, &uri, mtime)
+    {
+        return Ok(bytes);
     }
 
     let img = image::ImageReader::open(path)

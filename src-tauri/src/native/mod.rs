@@ -6,9 +6,9 @@
 use std::sync::mpsc;
 
 use serde::Serialize;
+use sonar_core::CoreError;
 use sonar_core::clipboard::FileClip;
 use sonar_core::uipath::{self, UiPath};
-use sonar_core::CoreError;
 use tauri::{AppHandle, Emitter, WebviewWindow};
 
 #[cfg(target_os = "linux")]

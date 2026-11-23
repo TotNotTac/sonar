@@ -105,11 +105,7 @@ pub fn human_size(bytes: u64) -> String {
         v /= 1000.0;
         i += 1;
     }
-    if i == 0 || v >= 10.0 {
-        format!("{v:.0} {}", UNITS[i])
-    } else {
-        format!("{v:.1} {}", UNITS[i])
-    }
+    if i == 0 || v >= 10.0 { format!("{v:.0} {}", UNITS[i]) } else { format!("{v:.1} {}", UNITS[i]) }
 }
 
 /// Mount point from `udisksctl mount` output:

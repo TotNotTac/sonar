@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::entry::Entry;
 use crate::error::{CoreError, Result};
 use crate::platform::HiddenRules;
-use crate::sort::{sort_entries, SortSpec};
+use crate::sort::{SortSpec, sort_entries};
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]

@@ -318,12 +318,12 @@ impl Transfer<'_> {
             }
         }
 
-        if mode == Mode::Fresh {
-            if let Err(e) = fs::create_dir(dst) {
-                self.fail(CoreError::from_io(dst, e));
-                self.skip(src);
-                return false;
-            }
+        if mode == Mode::Fresh
+            && let Err(e) = fs::create_dir(dst)
+        {
+            self.fail(CoreError::from_io(dst, e));
+            self.skip(src);
+            return false;
         }
         self.advance(0, 1);
 
@@ -352,11 +352,12 @@ impl Transfer<'_> {
             }
         }
 
-        if self.kind == TransferKind::Move && complete {
-            if let Err(e) = fs::remove_dir(src) {
-                self.fail(CoreError::from_io(src, e));
-                complete = false;
-            }
+        if self.kind == TransferKind::Move
+            && complete
+            && let Err(e) = fs::remove_dir(src)
+        {
+            self.fail(CoreError::from_io(src, e));
+            complete = false;
         }
         complete
     }
@@ -394,11 +395,11 @@ impl Transfer<'_> {
                 return false;
             }
         }
-        if self.kind == TransferKind::Move {
-            if let Err(e) = fs::remove_file(src) {
-                self.fail(CoreError::from_io(src, e));
-                return false;
-            }
+        if self.kind == TransferKind::Move
+            && let Err(e) = fs::remove_file(src)
+        {
+            self.fail(CoreError::from_io(src, e));
+            return false;
         }
         self.advance(0, 1);
         true

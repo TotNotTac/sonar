@@ -7,10 +7,10 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use gtk::{gdk, Clipboard, TargetEntry, TargetFlags};
+use gtk::{Clipboard, TargetEntry, TargetFlags, gdk};
 use sonar_core::clipboard::{
-    kde_cut_selection, parse_gnome_copied_files, parse_uri_list, to_gnome_copied_files, to_plain_text, to_uri_list,
-    ClipMode, FileClip,
+    ClipMode, FileClip, kde_cut_selection, parse_gnome_copied_files, parse_uri_list, to_gnome_copied_files,
+    to_plain_text, to_uri_list,
 };
 
 const GNOME: &str = "x-special/gnome-copied-files";

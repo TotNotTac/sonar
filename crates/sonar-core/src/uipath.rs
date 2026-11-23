@@ -28,10 +28,10 @@ pub fn encode(s: &OsStr) -> String {
     {
         use std::os::unix::ffi::OsStrExt;
         let bytes = s.as_bytes();
-        if let Ok(text) = std::str::from_utf8(bytes) {
-            if !text.chars().any(|c| u32::from(c) >= BASE) {
-                return text.to_string();
-            }
+        if let Ok(text) = std::str::from_utf8(bytes)
+            && !text.chars().any(|c| u32::from(c) >= BASE)
+        {
+            return text.to_string();
         }
         let mut out = String::with_capacity(bytes.len());
         for chunk in bytes.utf8_chunks() {

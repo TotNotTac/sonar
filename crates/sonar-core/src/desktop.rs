@@ -170,8 +170,7 @@ fn expand(template: &[String], entry: &DesktopEntry, desktop_file: &Path, files:
 mod tests {
     use super::*;
 
-    const OKULAR: &str =
-        "[Desktop Entry]\nType=Application\nName=Okular\nName[nl]=Okular NL\nExec=okular %U\nIcon=okular\n\
+    const OKULAR: &str = "[Desktop Entry]\nType=Application\nName=Okular\nName[nl]=Okular NL\nExec=okular %U\nIcon=okular\n\
         MimeType=application/pdf;application/postscript;\n\n[Desktop Action new]\nName=New window\nExec=okular --new";
 
     #[test]

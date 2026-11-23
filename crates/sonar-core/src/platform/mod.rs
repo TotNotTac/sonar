@@ -29,8 +29,8 @@ mod generic;
 use generic as imp;
 
 pub use imp::{
-    apps_for, eject_volume, icon, mount_device, mounted_volumes, native_type, open_path, open_with, restore,
-    set_default_app, trash, trash_dir, unmounted_volumes, HiddenRules, TrashReceipt,
+    HiddenRules, TrashReceipt, apps_for, eject_volume, icon, mount_device, mounted_volumes, native_type, open_path,
+    open_with, restore, set_default_app, trash, trash_dir, unmounted_volumes,
 };
 pub(crate) use imp::{clone_file, search_skip_mounts};
 

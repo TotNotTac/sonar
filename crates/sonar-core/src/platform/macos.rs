@@ -8,14 +8,14 @@ use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 use std::sync::{Mutex, OnceLock};
 
-use objc2::rc::{autoreleasepool, Retained};
-use objc2::runtime::AnyObject;
 use objc2::AnyThread;
+use objc2::rc::{Retained, autoreleasepool};
+use objc2::runtime::AnyObject;
 use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSBitmapImageRepPropertyKey, NSWorkspace};
 use objc2_foundation::{NSBundle, NSDictionary, NSFileManager, NSPoint, NSRect, NSSize, NSString, NSURL};
 use objc2_uniform_type_identifiers::UTType;
 
-use super::{cstring, AppInfo, Icon, NativeType};
+use super::{AppInfo, Icon, NativeType, cstring};
 use crate::entry::EntryKind;
 use crate::error::{CoreError, Result};
 use crate::places::{Place, PlaceSection};
@@ -223,7 +223,7 @@ pub fn eject_volume(path: &Path) -> Result<()> {
 // ---------- Open With ----------
 
 #[link(name = "CoreServices", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     // CFStringRef arguments; NSString is toll-free bridged.
     fn LSSetDefaultRoleHandlerForContentType(
         content_type: *const NSString,
@@ -447,8 +447,9 @@ mod open_with_tests {
         assert!(apps.iter().any(|a| a.name == "TextEdit"), "{:?}", apps.iter().map(|a| &a.name).collect::<Vec<_>>());
         assert_eq!(apps.iter().filter(|a| a.is_default).count(), 1, "exactly one default, listed first");
         assert!(apps[0].is_default);
-        assert!(apps
-            .iter()
-            .all(|a| a.id.ends_with(".app") && a.icon_key.as_deref().is_some_and(|k| k.starts_with("path:"))));
+        assert!(
+            apps.iter()
+                .all(|a| a.id.ends_with(".app") && a.icon_key.as_deref().is_some_and(|k| k.starts_with("path:")))
+        );
     }
 }

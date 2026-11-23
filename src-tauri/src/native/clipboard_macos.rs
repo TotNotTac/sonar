@@ -21,7 +21,7 @@ use objc2_app_kit::{
     NSPasteboard, NSPasteboardItem, NSPasteboardTypeFileURL, NSPasteboardTypeString, NSPasteboardWriting,
 };
 use objc2_foundation::{NSArray, NSString};
-use sonar_core::clipboard::{path_to_uri, to_plain_text, uri_to_path, ClipMode, FileClip};
+use sonar_core::clipboard::{ClipMode, FileClip, path_to_uri, to_plain_text, uri_to_path};
 
 /// The UTI AppKit maps the legacy `NSFilenamesPboardType` to (a list of
 /// paths). Older AppKit apps, including Terminal.app, read this.

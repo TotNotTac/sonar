@@ -3,7 +3,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
-use super::transfer::{run_transfer, Conflict, ConflictChoice, Progress, TransferKind, TransferObserver};
+use super::transfer::{Conflict, ConflictChoice, Progress, TransferKind, TransferObserver, run_transfer};
 use crate::error::{CoreError, Result};
 use crate::platform::{self, TrashReceipt};
 

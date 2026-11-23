@@ -9,7 +9,7 @@ mod undo;
 pub use basic::{create_folder, delete_permanently, new_folder, rename, trash};
 pub use names::{available_name, keep_both_name, validate_name};
 pub use transfer::{
-    run_transfer, Conflict, ConflictChoice, ConflictKind, ItemInfo, Progress, TransferKind, TransferObserver,
-    TransferOutcome,
+    Conflict, ConflictChoice, ConflictKind, ItemInfo, Progress, TransferKind, TransferObserver, TransferOutcome,
+    run_transfer,
 };
 pub use undo::UndoAction;
