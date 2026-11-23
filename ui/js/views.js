@@ -108,42 +108,51 @@ class VirtualView {
     return [from, Math.max(from, to)];
   }
 
-  clear() {
-    for (const node of this.nodes) node.remove();
-    this.nodes = [];
-  }
+  // The spacers keep the content height constant, so the scroll position must
+  // not move while rows are swapped. Two things would move it: the content
+  // briefly getting shorter (clamping), so rows are added and the spacers
+  // sized before old rows go; and scroll anchoring compensating for removed
+  // rows, which WebKit does despite `overflow-anchor: none`, so the position
+  // is put back afterwards.
 
   /** Throw away the rendered items and draw the wanted range from scratch. */
   render() {
-    // Work out the range first: once the old rows are gone the content is
-    // briefly shorter, and reading the scroll position then would clamp it.
     const s = this.pane.scroller;
     const scrollTop = s.scrollTop;
     this.geo = null;
     const [from, to] = this.wanted();
-    this.clear();
+    const stale = this.nodes;
+    this.nodes = [];
     this.start = from;
     this.insert(from, to, false);
     this.geo = null; // row height is measured from a rendered item
     this.spacers();
+    for (const node of stale) node.remove();
     if (s.scrollTop !== scrollTop) s.scrollTop = scrollTop;
   }
 
   /** After scrolling or resizing: add and drop items at the ends of the rendered range. */
   update() {
+    const s = this.pane.scroller;
+    const scrollTop = s.scrollTop;
     const [from, to] = this.wanted();
-    let end = this.start + this.nodes.length;
+    const end = this.start + this.nodes.length;
+    let stale = [];
     if (from >= end || to <= this.start) {
       // No overlap (a jump): start over.
-      this.clear();
+      stale = this.nodes;
+      this.nodes = [];
       this.start = from;
-      end = from;
+      this.insert(from, to, false);
+    } else {
+      if (from < this.start) this.insert(from, this.start, true);
+      if (to > end) this.insert(end, to, false);
+      while (this.start < from && this.nodes.length) { stale.push(this.nodes.shift()); this.start++; }
+      while (this.start + this.nodes.length > to && this.nodes.length) stale.push(this.nodes.pop());
     }
-    if (from < this.start) this.insert(from, this.start, true);
-    if (to > end) this.insert(end, to, false);
-    while (this.start < from && this.nodes.length) { this.nodes.shift().remove(); this.start++; }
-    while (this.start + this.nodes.length > to && this.nodes.length) this.nodes.pop().remove();
     this.spacers();
+    for (const node of stale) node.remove();
+    if (s.scrollTop !== scrollTop) s.scrollTop = scrollTop;
   }
 
   insert(from, to, atStart) {

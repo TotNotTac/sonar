@@ -951,11 +951,12 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let src = d.path().join("src");
         fs::create_dir(&src).unwrap();
-        let names: Vec<std::ffi::OsString> =
-            [&b"caf\xe9.txt"[..], b"back\\slash.txt", b"line\nbreak.txt", b"photo[1].jpg", b"star*.txt"]
-                .iter()
-                .map(|b| std::ffi::OsString::from_vec(b.to_vec()))
-                .collect();
+        let mut raw: Vec<&[u8]> = vec![b"back\\slash.txt", b"line\nbreak.txt", b"photo[1].jpg", b"star*.txt"];
+        // macOS (APFS) refuses names that aren't UTF-8, so only Linux has them.
+        if cfg!(target_os = "linux") {
+            raw.push(b"caf\xe9.txt");
+        }
+        let names: Vec<std::ffi::OsString> = raw.iter().map(|b| std::ffi::OsString::from_vec(b.to_vec())).collect();
         for n in &names {
             fs::write(src.join(n), n.as_bytes()).unwrap();
         }
