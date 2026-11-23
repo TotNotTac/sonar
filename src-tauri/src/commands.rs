@@ -380,3 +380,26 @@ pub fn cancel_size(jobs: State<'_, SizeJobs>, token: String) {
         c.store(true, Ordering::Relaxed);
     }
 }
+
+// ---------- Open With ----------
+
+#[tauri::command]
+pub async fn apps_for(path: PathBuf) -> Result<Vec<sonar_core::platform::AppInfo>, CoreError> {
+    tauri::async_runtime::spawn_blocking(move || sonar_core::platform::apps_for(&path))
+        .await
+        .map_err(|e| CoreError::Other(e.to_string()))
+}
+
+#[tauri::command]
+pub async fn open_with(paths: Vec<PathBuf>, app: String) -> Result<(), CoreError> {
+    tauri::async_runtime::spawn_blocking(move || sonar_core::platform::open_with(&paths, &app))
+        .await
+        .map_err(|e| CoreError::Other(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn set_default_app(path: PathBuf, app: String) -> Result<(), CoreError> {
+    tauri::async_runtime::spawn_blocking(move || sonar_core::platform::set_default_app(&path, &app))
+        .await
+        .map_err(|e| CoreError::Other(e.to_string()))?
+}

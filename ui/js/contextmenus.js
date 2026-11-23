@@ -1,6 +1,7 @@
 // Context menu contents. Each builder returns items for menu.js.
 
-import { invoke, isMac, shortcut } from "./util.js";
+import { chooseApp, openWith } from "./openwith.js";
+import { assetUrl, invoke, isMac, shortcut } from "./util.js";
 
 const keys = {
   newFolder: shortcut("mod+shift+N"),
@@ -62,6 +63,18 @@ export function itemsMenu(app, pane, info = {}) {
     folder && { label: "Open in New Tab", action: () => app.newTab(folder.path, { activate: false }) },
     folder && { label: "Open in Split View", action: () => app.openInSplit(folder.path) },
     archives && { label: "Open With Default App", action: () => sel.forEach((e) => invoke("open_path", { path: e.path }).catch(() => {})) },
+    info.apps?.length && {
+      label: "Open With",
+      submenu: [
+        ...info.apps.slice(0, 12).map((a) => ({
+          label: a.isDefault ? `${a.name} (default)` : a.name,
+          iconUrl: a.iconKey ? assetUrl("icon", { key: a.iconKey, size: 16 }) : null,
+          action: () => openWith(app, pane, a.id),
+        })),
+        "-",
+        { label: "Other Application…", action: () => chooseApp(app, pane, info.apps) },
+      ],
+    },
     "-",
     archives && { label: "Extract Here", action: () => ops.extract(pane) },
     archives && other?.path && !other.view?.archive && { label: `Extract to “${app.folderLabel(other.path)}”`, action: () => ops.extract(pane, other.path) },

@@ -44,11 +44,13 @@ export function showMenu(x, y, items) {
       row.setAttribute("role", it.checked != null ? "menuitemcheckbox" : "menuitem");
       if (it.disabled) row.classList.add("disabled");
       if (it.danger) row.classList.add("danger");
-      row.innerHTML = `<span class="menu-check">${it.checked ? Icons.ui("check") : ""}</span>
+      const lead = it.checked ? Icons.ui("check") : it.iconUrl ? `<img class="menu-icon" alt="" src="${it.iconUrl}">` : "";
+      row.innerHTML = `<span class="menu-check">${lead}</span>
         <span class="menu-label"></span>
         <span class="menu-shortcut"></span>
         <span class="menu-arrow">${it.submenu ? Icons.ui("chevron") : ""}</span>`;
       row.querySelector(".menu-label").textContent = it.label;
+      row.querySelector(".menu-icon")?.addEventListener("error", (e) => e.target.remove());
       row.querySelector(".menu-shortcut").textContent = it.shortcut ?? "";
       row._item = it;
       row.addEventListener("mouseenter", () => highlight(level, row, true));

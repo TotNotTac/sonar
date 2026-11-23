@@ -518,9 +518,14 @@ export class App {
   }
 
   async contextMenu(x, y, ctx) {
-    // Look up what Undo would do and whether there is anything to paste first.
-    const [undoLabel, clip] = await Promise.all([this.ops.undoLabel(), this.ops.readClipboard()]);
-    const info = { undoLabel, canPaste: !!clip?.paths?.length };
+    // Look up what Undo would do, whether there is anything to paste, and
+    // which apps can open the selection, before showing the menu.
+    const sel = ctx.pane.selectedEntries();
+    const appsFor = ctx.kind === "items" && sel.length && !ctx.pane.view?.archive && !sel.some((e) => ctx.pane.isFolder(e) && sel.length > 1)
+      ? invoke("apps_for", { path: sel[0].path }).catch(() => [])
+      : Promise.resolve([]);
+    const [undoLabel, clip, apps] = await Promise.all([this.ops.undoLabel(), this.ops.readClipboard(), appsFor]);
+    const info = { undoLabel, canPaste: !!clip?.paths?.length, apps };
     showMenu(x, y, ctx.kind === "items" ? itemsMenu(this, ctx.pane, info) : backgroundMenu(this, ctx.pane, info));
   }
 

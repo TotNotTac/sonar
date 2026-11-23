@@ -30,8 +30,8 @@ use generic as imp;
 
 pub(crate) use imp::clone_file;
 pub use imp::{
-    eject_volume, icon, mount_device, mounted_volumes, native_type, open_path, restore, trash, trash_dir,
-    unmounted_volumes, HiddenRules, TrashReceipt,
+    apps_for, eject_volume, icon, mount_device, mounted_volumes, native_type, open_path, open_with, restore,
+    set_default_app, trash, trash_dir, unmounted_volumes, HiddenRules, TrashReceipt,
 };
 
 use std::fs;
@@ -54,6 +54,27 @@ pub struct NativeType {
     pub type_id: Option<String>,
     /// Opaque key for [`icon`].
     pub icon_key: Option<String>,
+}
+
+/// An application that can open a file ("Open With").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppInfo {
+    /// What to pass back to [`open_with`]: the app's path (macOS) or desktop file id (Linux).
+    pub id: String,
+    pub name: String,
+    pub icon_key: Option<String>,
+    /// The current default app for this file's type.
+    pub is_default: bool,
+}
+
+/// Default first, then by name; one entry per name.
+#[allow(dead_code)] // unused on the generic backend
+pub(crate) fn tidy_apps(mut apps: Vec<AppInfo>) -> Vec<AppInfo> {
+    apps.sort_by(|a, b| b.is_default.cmp(&a.is_default).then_with(|| crate::sort::natural_cmp(&a.name, &b.name)));
+    let mut seen = std::collections::HashSet::new();
+    apps.retain(|a| seen.insert(a.name.to_lowercase()));
+    apps
 }
 
 /// An icon image ready to serve to the UI.

@@ -12,10 +12,10 @@ use objc2::rc::{autoreleasepool, Retained};
 use objc2::runtime::AnyObject;
 use objc2::AnyThread;
 use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSBitmapImageRepPropertyKey, NSWorkspace};
-use objc2_foundation::{NSDictionary, NSFileManager, NSPoint, NSRect, NSSize, NSString, NSURL};
+use objc2_foundation::{NSBundle, NSDictionary, NSFileManager, NSPoint, NSRect, NSSize, NSString, NSURL};
 use objc2_uniform_type_identifiers::UTType;
 
-use super::{cstring, Icon, NativeType};
+use super::{cstring, AppInfo, Icon, NativeType};
 use crate::entry::EntryKind;
 use crate::error::{CoreError, Result};
 use crate::places::{Place, PlaceSection};
@@ -214,6 +214,81 @@ pub fn eject_volume(path: &Path) -> Result<()> {
         .map_err(|e| CoreError::Other(format!("Could not eject \"{}\": {e}", path.display())))
 }
 
+// ---------- Open With ----------
+
+#[link(name = "CoreServices", kind = "framework")]
+extern "C" {
+    // CFStringRef arguments; NSString is toll-free bridged.
+    fn LSSetDefaultRoleHandlerForContentType(
+        content_type: *const NSString,
+        role: u32,
+        bundle_id: *const NSString,
+    ) -> i32;
+}
+const LS_ROLES_ALL: u32 = 0xFFFF_FFFF;
+
+fn file_url(path: &Path) -> Option<Retained<NSURL>> {
+    let c = cstring(path).ok()?;
+    let ptr = NonNull::new(c.as_ptr() as *mut _)?;
+    // SAFETY: `c` is a valid NUL-terminated path for the duration of the call.
+    Some(unsafe { NSURL::fileURLWithFileSystemRepresentation_isDirectory_relativeToURL(ptr, path.is_dir(), None) })
+}
+
+/// Apps Launch Services offers for this file (default first).
+pub fn apps_for(path: &Path) -> Vec<AppInfo> {
+    autoreleasepool(|_| {
+        let Some(url) = file_url(path) else { return Vec::new() };
+        let ws = NSWorkspace::sharedWorkspace();
+        let default = ws.URLForApplicationToOpenURL(&url).and_then(|u| u.path()).map(|p| p.to_string());
+        let fm = NSFileManager::defaultManager();
+        let apps = ws
+            .URLsForApplicationsToOpenURL(&url)
+            .iter()
+            .filter_map(|u| u.path().map(|p| p.to_string()))
+            .filter(|p| !p.starts_with("/Volumes/") && !p.contains("/.Trash/")) // mounted installers etc.
+            .map(|p| {
+                let name = fm.displayNameAtPath(&NSString::from_str(&p)).to_string();
+                AppInfo {
+                    name: name.strip_suffix(".app").unwrap_or(&name).to_string(),
+                    icon_key: Some(format!("path:{p}")),
+                    is_default: default.as_deref() == Some(p.as_str()),
+                    id: p,
+                }
+            })
+            .collect();
+        super::tidy_apps(apps)
+    })
+}
+
+pub fn open_with(paths: &[PathBuf], app: &str) -> Result<()> {
+    let mut args = vec!["-a".to_string(), app.to_string()];
+    args.extend(paths.iter().map(|p| p.to_string_lossy().into_owned()));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    super::run_tool("/usr/bin/open", &args)
+        .map(drop)
+        .map_err(|e| CoreError::Other(format!("Could not open with {app}: {e}")))
+}
+
+/// Make `app` the default for files of `path`'s type.
+pub fn set_default_app(path: &Path, app: &str) -> Result<()> {
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let kind = if path.is_dir() { EntryKind::Directory } else { EntryKind::File };
+    let uti = native_type(&name, path, kind).type_id.ok_or_else(|| CoreError::Other("Unknown file type".into()))?;
+    let bundle_id = autoreleasepool(|_| {
+        let url = NSURL::fileURLWithPath(&NSString::from_str(app));
+        NSBundle::bundleWithURL(&url).and_then(|b| b.bundleIdentifier()).map(|s| s.to_string())
+    })
+    .ok_or_else(|| CoreError::Other(format!("{app} is not an application")))?;
+    let (uti_ns, id_ns) = (NSString::from_str(&uti), NSString::from_str(&bundle_id));
+    // SAFETY: both strings are valid for the call (toll-free bridged CFStrings).
+    let status = unsafe { LSSetDefaultRoleHandlerForContentType(&*uti_ns, LS_ROLES_ALL, &*id_ns) };
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(CoreError::Other(format!("macOS refused to change the default app for {uti} (error {status})")))
+    }
+}
+
 // ---------- File types and icons ----------
 
 /// Type description and identifier from UTType, cached per extension.
@@ -350,5 +425,24 @@ mod tests {
         assert!(parse(&doc("<key>Ejectable</key><true/><key>Internal</key><false/>")));
         assert!(parse(&doc("<key>Ejectable</key><false/><key>Internal</key><false/>")), "external disk");
         assert!(!parse(&doc("<key>Ejectable</key><false/><key>Removable</key><false/><key>Internal</key><true/>")));
+    }
+}
+
+#[cfg(test)]
+mod open_with_tests {
+    use super::*;
+
+    #[test]
+    fn lists_apps_for_a_text_file() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("notes.txt");
+        fs::write(&f, "x").unwrap();
+        let apps = apps_for(&f);
+        assert!(apps.iter().any(|a| a.name == "TextEdit"), "{:?}", apps.iter().map(|a| &a.name).collect::<Vec<_>>());
+        assert_eq!(apps.iter().filter(|a| a.is_default).count(), 1, "exactly one default, listed first");
+        assert!(apps[0].is_default);
+        assert!(apps
+            .iter()
+            .all(|a| a.id.ends_with(".app") && a.icon_key.as_deref().is_some_and(|k| k.starts_with("path:"))));
     }
 }

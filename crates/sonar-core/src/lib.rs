@@ -7,6 +7,7 @@
 pub mod archive;
 pub mod breadcrumb;
 pub mod clipboard;
+pub mod desktop;
 pub mod entry;
 pub mod error;
 pub mod filetype;

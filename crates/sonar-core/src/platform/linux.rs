@@ -6,7 +6,7 @@ use std::sync::{Mutex, OnceLock};
 
 use xdg_mime::SharedMimeInfo;
 
-use super::{cstring, Icon, NativeType};
+use super::{cstring, AppInfo, Icon, NativeType};
 use crate::entry::EntryKind;
 use crate::error::{CoreError, Result};
 use crate::places::{Place, PlaceSection};
@@ -297,6 +297,119 @@ fn default_comment(xml: &str) -> Option<String> {
     (!text.is_empty()).then(|| text.to_string())
 }
 
+// ---------- Open With (desktop files + xdg-mime) ----------
+
+fn mime_of(path: &Path) -> String {
+    if path.is_dir() {
+        return "inode/directory".into();
+    }
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    native_type(&name, path, EntryKind::File).type_id.unwrap_or_else(|| "application/octet-stream".into())
+}
+
+/// The type, its canonical name if it's an alias (text/x-python ->
+/// text/x-python3), and all its ancestors (-> text/plain), most specific
+/// first. Every text/* type is also text/plain, per the shared-mime-info spec.
+fn mime_family(mime: &str) -> Vec<String> {
+    let db = mime_db().lock().unwrap_or_else(|p| p.into_inner());
+    let mut out: Vec<String> = Vec::new();
+    let mut queue = std::collections::VecDeque::from([mime.to_string()]);
+    while let Some(m) = queue.pop_front() {
+        if out.contains(&m) || out.len() > 32 {
+            continue;
+        }
+        out.push(m.clone());
+        let Ok(parsed) = m.parse() else { continue };
+        if let Some(canonical) = db.unalias_mime_type(&parsed) {
+            queue.push_back(canonical.essence_str().to_string());
+        }
+        for parent in db.get_parents(&parsed).unwrap_or_default() {
+            queue.push_back(parent.essence_str().to_string());
+        }
+    }
+    if mime.starts_with("text/") && !out.iter().any(|m| m == "text/plain") {
+        out.push("text/plain".into());
+    }
+    out
+}
+
+/// All application desktop files, by id (`org.kde.okular.desktop`); user
+/// entries override system ones, per the spec.
+fn desktop_entries(data_dirs: &[PathBuf]) -> Vec<(String, PathBuf, crate::desktop::DesktopEntry)> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for base in data_dirs.iter().map(|d| d.join("applications")) {
+        let mut stack = vec![base.clone()];
+        while let Some(dir) = stack.pop() {
+            for de in fs::read_dir(&dir).into_iter().flatten().flatten() {
+                let p = de.path();
+                if p.is_dir() {
+                    stack.push(p);
+                    continue;
+                }
+                if p.extension().and_then(|e| e.to_str()) != Some("desktop") {
+                    continue;
+                }
+                // Subfolders become part of the id: kde/foo.desktop -> kde-foo.desktop.
+                let id = p.strip_prefix(&base).unwrap_or(&p).to_string_lossy().replace('/', "-");
+                if !seen.insert(id.clone()) {
+                    continue;
+                }
+                if let Some(entry) = fs::read_to_string(&p).ok().and_then(|t| crate::desktop::parse(&t)) {
+                    out.push((id, p, entry));
+                }
+            }
+        }
+    }
+    out
+}
+
+pub fn apps_for(path: &Path) -> Vec<AppInfo> {
+    let mime = mime_of(path);
+    let default = super::run_tool("xdg-mime", &["query", "default", &mime]).ok().map(|s| s.trim().to_string());
+    apps_in(&mime, &data_dirs(), default.as_deref())
+}
+
+fn apps_in(mime: &str, data_dirs: &[PathBuf], default: Option<&str>) -> Vec<AppInfo> {
+    let family = mime_family(mime);
+    let apps = desktop_entries(data_dirs)
+        .into_iter()
+        .filter(|(_, _, e)| !e.hidden && !e.terminal && e.mime_types.iter().any(|m| family.contains(m)))
+        .map(|(id, _, e)| AppInfo { is_default: default == Some(id.as_str()), name: e.name, icon_key: e.icon, id })
+        .collect();
+    super::tidy_apps(apps)
+}
+
+pub fn open_with(paths: &[PathBuf], app: &str) -> Result<()> {
+    let fail = |m: String| CoreError::Other(format!("Could not open with {app}: {m}"));
+    let (_, file, entry) = desktop_entries(&data_dirs())
+        .into_iter()
+        .find(|(id, _, _)| id == app)
+        .ok_or_else(|| fail("application not found".into()))?;
+    for cmd in crate::desktop::commands(&entry, &file, paths) {
+        let Some((program, args)) = cmd.split_first() else { continue };
+        let child = std::process::Command::new(program)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| fail(e.to_string()))?;
+        std::thread::spawn(move || {
+            let mut child = child;
+            child.wait() // reap; the app keeps running
+        });
+    }
+    Ok(())
+}
+
+pub fn set_default_app(path: &Path, app: &str) -> Result<()> {
+    let mime = mime_of(path);
+    super::run_tool("xdg-mime", &["default", app, &mime])
+        .map(drop)
+        .map_err(|e| CoreError::Other(format!("Could not make {app} the default for {mime}: {e}")))
+}
+
 /// The user's icon theme: KDE's setting, then GTK's, then sensible defaults.
 fn icon_theme() -> &'static str {
     static THEME: OnceLock<String> = OnceLock::new();
@@ -334,6 +447,15 @@ fn ini_value(ini: &str, section: &str, key: &str) -> Option<String> {
 /// Look up the first available name in `key` (comma-separated, most specific
 /// first) in the icon theme, at `size` logical pixels (2x for HiDPI).
 pub fn icon(key: &str, size: u32) -> Option<Icon> {
+    // Desktop files may name an icon by absolute path.
+    if key.starts_with('/') {
+        let content_type = match Path::new(key).extension()?.to_str()? {
+            "svg" => "image/svg+xml",
+            "png" => "image/png",
+            _ => return None,
+        };
+        return Some(Icon { bytes: fs::read(key).ok()?, content_type });
+    }
     let px = u16::try_from(size.clamp(8, 256) * 2).ok()?;
     let theme = icon_theme();
     key.split(',').filter(|n| !n.is_empty()).find_map(|name| {
@@ -425,6 +547,38 @@ me@host:/srv /home/me/srv fuse.sshfs rw 0 0
             assert!(icon.content_type.starts_with("image/"));
             assert!(!icon.bytes.is_empty());
         }
+    }
+
+    #[test]
+    fn apps_from_desktop_files() {
+        if !Path::new("/usr/share/mime/mime.cache").exists() {
+            return; // parent types come from shared-mime-info
+        }
+        let d = tempfile::tempdir().unwrap();
+        let apps = d.path().join("applications");
+        fs::create_dir_all(apps.join("kde")).unwrap();
+        let entry = |name: &str, mime: &str, extra: &str| {
+            format!("[Desktop Entry]\nType=Application\nName={name}\nExec={name} %F\nMimeType={mime};\n{extra}")
+        };
+        fs::write(apps.join("kate.desktop"), entry("Kate", "text/plain", "Icon=kate")).unwrap();
+        fs::write(apps.join("kde/kwrite.desktop"), entry("KWrite", "text/plain", "")).unwrap();
+        fs::write(apps.join("pyide.desktop"), entry("PyIDE", "text/x-python", "")).unwrap();
+        fs::write(apps.join("hidden.desktop"), entry("Hidden", "text/plain", "NoDisplay=true")).unwrap();
+        fs::write(apps.join("vim.desktop"), entry("Vim", "text/plain", "Terminal=true")).unwrap();
+        fs::write(apps.join("gimp.desktop"), entry("GIMP", "image/png", "")).unwrap();
+
+        // A Python file: its own type plus text/plain editors, default first.
+        let got = apps_in("text/x-python", &[d.path().to_path_buf()], Some("kde-kwrite.desktop"));
+        let names: Vec<_> = got.iter().map(|a| (a.name.as_str(), a.id.as_str(), a.is_default)).collect();
+        assert_eq!(
+            names,
+            [
+                ("KWrite", "kde-kwrite.desktop", true),
+                ("Kate", "kate.desktop", false),
+                ("PyIDE", "pyide.desktop", false)
+            ]
+        );
+        assert_eq!(got[1].icon_key.as_deref(), Some("kate"));
     }
 
     #[test]

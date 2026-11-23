@@ -501,6 +501,19 @@
       window.__mock.sizeJobs.push(token);
     },
     cancel_size: ({ token }) => { window.__mock.cancelledSizes.push(token); },
+    apps_for: ({ path }) => {
+      const ext = nameOf(path).split(".").pop();
+      const apps = {
+        md: [["Typora", true], ["TextEdit", false], ["Visual Studio Code", false]],
+        pdf: [["Preview", true], ["Okular", false]],
+      }[ext] ?? (fs.get(path)?.kind === "dir" ? [["Visual Studio Code", false]] : []);
+      return apps.map(([name, isDefault]) => ({ id: `/Applications/${name}.app`, name, iconKey: `path:/Applications/${name}.app`, isDefault }));
+    },
+    open_with: ({ paths, app }) => { window.__mock.openedWith.push([app, paths]); },
+    set_default_app: ({ path, app }) => {
+      if (app.includes("Okular")) throw err("other", "macOS refused to change the default app (error -50)");
+      window.__mock.defaults.push([path, app]);
+    },
     has_native_menu: () => window.__mock.nativeMenu,
     take_open_requests: () => window.__mock.openRequests.splice(0),
     set_menu_state: ({ state }) => { window.__mock.menuState = state; },
@@ -524,6 +537,8 @@
     nativeMenu: false,
     searchDelay: 20,
     sizeJobs: [],
+    openedWith: [],
+    defaults: [],
     cancelledSizes: [],
     /** Folders "the OS" asked to show at startup (Sonar as default file manager). */
     openRequests: [],

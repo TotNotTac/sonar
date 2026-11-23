@@ -4,7 +4,7 @@ use std::fs::Metadata;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use super::{Icon, NativeType};
+use super::{AppInfo, Icon, NativeType};
 use crate::entry::EntryKind;
 use crate::error::{CoreError, Result};
 use crate::places::{Place, PlaceSection};
@@ -62,6 +62,18 @@ pub fn native_type(_name: &str, _path: &Path, _kind: EntryKind) -> NativeType {
 
 pub fn icon(_key: &str, _size: u32) -> Option<Icon> {
     None
+}
+
+pub fn apps_for(_path: &Path) -> Vec<AppInfo> {
+    Vec::new()
+}
+
+pub fn open_with(_paths: &[PathBuf], app: &str) -> Result<()> {
+    Err(CoreError::Other(format!("Opening with {app} is not supported on this platform")))
+}
+
+pub fn set_default_app(_path: &Path, _app: &str) -> Result<()> {
+    Err(CoreError::Other("Not supported on this platform".into()))
 }
 
 pub fn unmounted_volumes() -> Vec<Place> {
