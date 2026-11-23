@@ -11,6 +11,16 @@ the layout, features and shortcuts.
   `GIT_SSH_COMMAND="ssh -o IdentityAgent=$HOME/.bitwarden-ssh-agent.sock" git push origin main`
 - CI (`.github/workflows/ci.yml`) runs on every push; `build.yml` builds macOS + Linux binaries on push.
 
+## Releasing
+
+1. Tag the commit (`git tag -a vX.Y.Z -m "Sonar X.Y.Z" && git push origin vX.Y.Z`). `build.yml` attaches the
+   AppImage, `.deb`, `.rpm` and `.dmg` to a draft release. macOS runners are sometimes unavailable; then rerun
+   the failed job (`gh run rerun <id> --failed`).
+2. Publish the release. `aur.yml` then updates `sonar` and `sonar-bin` on the AUR (version, checksums), tests
+   `sonar-bin`, and commits `packaging/aur/` back to main. `sonar-git` needs nothing. Rerun it from the
+   Actions tab (tag as input) if it fails. It needs the secret `AUR_SSH_KEY` (a key used only for this, whose
+   public half is in the AUR account).
+
 ## Architecture rules
 
 - `crates/sonar-core`: all filesystem logic, no Tauri dependency, unit-tested. OS differences live behind

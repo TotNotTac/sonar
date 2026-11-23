@@ -17,12 +17,22 @@ Not there yet: Dolphin's F4 terminal panel and a quick preview (Space). See the
 
 ## Install
 
-Download the latest build from [Releases](https://github.com/samtoxie/sonar/releases):
+**Arch Linux:** from the AUR, with an AUR helper such as [paru](https://github.com/Morganamilo/paru):
 
-- **Arch Linux / other Linux:** the AppImage (or the `.deb` / `.rpm`). Sonar uses a few standard tools at
-  runtime; on Arch: `sudo pacman -S --needed shared-mime-info xdg-utils udisks2 libarchive` plus an icon
-  theme such as `breeze-icons` (all present on a usual KDE or GNOME install). If one is missing, the feature
-  that needs it says which package to install.
+```sh
+paru -S sonar-bin   # the release build, ready to run
+paru -S sonar       # or: built from the release's source (a few minutes)
+paru -S sonar-git   # or: built from the latest development version
+```
+
+Install `udisks2` too if you want to mount drives from the sidebar.
+
+**Other Linux / macOS:** download the latest build from [Releases](https://github.com/samtoxie/sonar/releases):
+
+- **Linux:** the AppImage (or the `.deb` / `.rpm`). Sonar uses a few standard tools at runtime
+  (`shared-mime-info`, `xdg-utils`, `udisks2`, `libarchive` and an icon theme such as `breeze-icons`; all
+  present on a usual KDE or GNOME install). If one is missing, the feature that needs it says which package to
+  install.
 - **macOS (Apple Silicon):** the `.dmg`. The build isn't signed: after copying Sonar to Applications, open it
   once and allow it under System Settings → Privacy & Security.
 
@@ -108,10 +118,10 @@ folder). `sonar ~/Downloads` works from a terminal too.
 Now `open ~/Downloads`, folders opened from other apps and the Dock open in Sonar. Folders you double-click
 inside Finder windows still open in Finder. Undo with `duti -s com.apple.finder public.folder all`.
 
-**Arch Linux / KDE Plasma:** with the `.deb`/`.rpm` package the launcher is installed; for the AppImage, create
-`~/.local/share/applications/sonar.desktop` from `src-tauri/linux/sonar.desktop` with `Exec=/path/to/Sonar.AppImage %U`.
-Then pick Sonar under System Settings → Default Applications → File Manager, or run
-`xdg-mime default sonar.desktop inode/directory` (use `Sonar.desktop` for the packaged launcher).
+**Arch Linux / KDE Plasma:** the AUR packages (and the `.deb`/`.rpm`) install the launcher; for the AppImage,
+create `~/.local/share/applications/sonar.desktop` from `src-tauri/linux/sonar.desktop` with
+`Exec=/path/to/Sonar.AppImage %U`. Then pick Sonar under System Settings → Default Applications → File Manager,
+or run `xdg-mime default sonar.desktop inode/directory` (with the `.deb`/`.rpm`: `Sonar.desktop`).
 
 ## Tests
 
@@ -224,17 +234,6 @@ Type a few letters to jump to a matching entry. Mouse back/forward buttons also 
 Configure Sonar (☰ menu, Ctrl+Shift+,; on macOS Sonar → Settings…, ⌘,) sets what opens at startup, the
 default view and sort order, whether views are remembered per folder, hidden files, image thumbnails, and
 which actions ask for confirmation. Changes apply immediately.
-
-## Releasing
-
-1. Tag the commit (`git tag -a v0.2.0 -m "Sonar 0.2.0" && git push origin v0.2.0`). The Build workflow
-   attaches the AppImage, `.deb`, `.rpm` and `.dmg` to a draft release.
-2. Publish the release. The AUR workflow then updates `sonar` and `sonar-bin` on the AUR (new version and
-   checksums) and commits the PKGBUILDs in `packaging/aur/` back to main. `sonar-git` needs nothing.
-   If it fails, fix the cause and run it again from the Actions tab (with the tag as input).
-
-The AUR workflow needs the repository secret `AUR_SSH_KEY`: a private key, used only for this, whose public
-key is in the AUR account.
 
 ## License
 
