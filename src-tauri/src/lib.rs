@@ -4,6 +4,8 @@ mod native;
 mod open;
 mod ops;
 mod protocol;
+#[cfg(target_os = "macos")]
+mod reveal_macos;
 
 pub fn run() {
     tauri::Builder::default()
@@ -19,7 +21,10 @@ pub fn run() {
         .setup(|app| {
             commands::watch_places(app.handle().clone());
             #[cfg(target_os = "macos")]
-            menu::install(app.handle());
+            {
+                menu::install(app.handle());
+                reveal_macos::install(app.handle());
+            }
             // `sonar ~/Downloads` (and desktop launchers' `Exec=sonar %U`).
             let args: Vec<String> = std::env::args().skip(1).collect();
             let cwd = std::env::current_dir().unwrap_or_else(|_| "/".into());
