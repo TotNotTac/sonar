@@ -47,11 +47,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install WebKitGTK and bundling tools
+      - name: Install WebKitGTK and bundling tools (cached)
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libssl-dev patchelf rpm
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libssl-dev patchelf rpm
+          version: 1.0
 
       - uses: actions/setup-node@v4
         with:
