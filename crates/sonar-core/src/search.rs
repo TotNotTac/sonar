@@ -53,7 +53,8 @@ impl Matcher {
         let (kind, min_score) = if q.contains(['*', '?']) {
             (Kind::Glob(q.to_lowercase().chars().collect()), 0)
         } else {
-            let pattern = Pattern::parse(q, CaseMatching::Smart, Normalization::Smart);
+            // Case never matters, like Dolphin: "hva", "HVA" and "HvA" find the same files.
+            let pattern = Pattern::parse(q, CaseMatching::Ignore, Normalization::Smart);
             // The query matched against itself is the best score possible.
             let ideal = pattern.score(Utf32Str::new(q, &mut buf), &mut matcher).unwrap_or(0);
             let min = (f64::from(ideal) * MIN_QUALITY) as u32;
@@ -213,7 +214,7 @@ mod tests {
         // Better matches score higher.
         let mut r = Matcher::new("report").unwrap();
         assert!(r.score("report.pdf").unwrap() > r.score("r-e-p-o-r-t.pdf").unwrap());
-        // fzf syntax: all terms, exact, negation, suffix; smart case.
+        // fzf syntax: all terms, exact, negation, suffix.
         let mut multi = Matcher::new("dl rep").unwrap();
         assert!(multi.score("Downloads/report.pdf").is_some());
         let mut neg = Matcher::new("report !draft").unwrap();
@@ -224,8 +225,15 @@ mod tests {
         let mut word = Matcher::new("invoice").unwrap();
         assert!(word.score("Documents/2025/finance/Q3/acme-invoice-0042-final.pdf").is_some());
         assert!(word.score("src/lib/environment/config/service.rs").is_none(), "scattered letters");
-        let mut case = Matcher::new("Report").unwrap();
-        assert!(case.score("report.pdf").is_none() && case.score("Report.pdf").is_some());
+        // Case-insensitive, and the casing of the query doesn't change the results.
+        let names = ["HvA-rooster.pdf", "studie/HVA notes.md", "hva.txt", "Downloads/Have a look.txt"];
+        let found = |q: &str| {
+            let mut m = Matcher::new(q).unwrap();
+            names.iter().map(|n| m.score(n).is_some()).collect::<Vec<_>>()
+        };
+        assert_eq!(found("hva")[..3], [true, true, true]);
+        assert_eq!(found("HVA"), found("hva"));
+        assert_eq!(found("HvA"), found("hva"));
         assert!(Matcher::new("   ").is_none());
     }
 
