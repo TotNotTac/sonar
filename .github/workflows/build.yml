@@ -1,0 +1,87 @@
+name: Build
+
+# Installable binaries.
+# - Pushes to main: attached to the workflow run as artifacts (kept 14 days).
+# - Tags like v0.1.0: a draft GitHub Release with the installers attached.
+#   Publish it from the Releases page after a quick check.
+#
+# macOS builds are not signed/notarized (no Apple Developer certificate yet):
+# on first launch, allow Sonar in System Settings → Privacy & Security, or run
+# `xattr -d com.apple.quarantine /Applications/Sonar.app`.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # create releases on tags
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bundle:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (Apple Silicon)
+            os: macos-15
+            artifact: sonar-macos-arm64
+            paths: |
+              target/release/bundle/dmg/*.dmg
+              target/release/bundle/macos/*.app
+          - name: Linux (x86_64)
+            # Older glibc than current Ubuntu, so the AppImage runs on more distros.
+            os: ubuntu-22.04
+            artifact: sonar-linux-x86_64
+            paths: |
+              target/release/bundle/appimage/*.AppImage
+              target/release/bundle/deb/*.deb
+              target/release/bundle/rpm/*.rpm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install WebKitGTK and bundling tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libssl-dev patchelf rpm
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+
+      - name: Build (and, on tags, create a draft release)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: Sonar ${{ github.ref_name }}
+          releaseBody: |
+            Unsigned builds. macOS: on first launch allow Sonar in System Settings → Privacy & Security.
+            Linux: the AppImage runs on most distributions (including Arch); .deb and .rpm are also attached.
+          releaseDraft: true
+          prerelease: false
+
+      - name: Upload binaries
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.paths }}
+          if-no-files-found: error
+          retention-days: 14
