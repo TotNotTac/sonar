@@ -57,6 +57,7 @@ pub enum ConflictChoice {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemInfo {
+    #[serde(with = "crate::uipath::path")]
     pub path: PathBuf,
     pub name: String,
     pub is_dir: bool,
@@ -170,7 +171,7 @@ pub fn run_transfer(
                 continue;
             }
             // Copying into the same folder makes a numbered duplicate.
-            (true, TransferKind::Copy) => keep_both_name(dest_dir, &name.to_string_lossy(), src_is_dir),
+            (true, TransferKind::Copy) => keep_both_name(dest_dir, &crate::uipath::encode(name), src_is_dir),
             (false, _) => dest_dir.join(name),
         };
         t.item(src, dst, true);
@@ -269,7 +270,7 @@ impl Transfer<'_> {
                 // to do implicitly; keep both instead.
                 (ConflictChoice::Replace, ConflictKind::Mismatch) | (ConflictChoice::KeepBoth, _) => {
                     let parent = dst.parent().unwrap_or(Path::new("/")).to_path_buf();
-                    let name = dst.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                    let name = crate::uipath::encode(dst.file_name().unwrap_or_default());
                     dst = keep_both_name(&parent, &name, meta.is_dir());
                 }
             }
@@ -457,8 +458,8 @@ fn copy_symlink(src: &Path, dst: &Path, mode: Mode) -> io::Result<()> {
 }
 
 fn part_path(dst: &Path) -> PathBuf {
-    let name = dst.file_name().unwrap_or_default().to_string_lossy();
-    dst.with_file_name(format!(".{name}.sonar-part"))
+    let name = crate::uipath::encode(dst.file_name().unwrap_or_default());
+    dst.with_file_name(crate::uipath::decode(&format!(".{name}.sonar-part")))
 }
 
 /// Total bytes of regular files and number of entries under `path`

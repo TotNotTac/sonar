@@ -11,7 +11,7 @@ import { showProperties } from "./properties.js";
 import { showSettings } from "./settings.js";
 import { placePrefs, savePlacePrefs, settings, store } from "./store.js";
 import { Fmt } from "./format.js";
-import { basename, el, errMsg, invoke, isMac, isMod, listen, shortcut } from "./util.js";
+import { basename, el, errMsg, invoke, isMac, isMod, listen, shortcut, shown } from "./util.js";
 
 const $ = (id) => document.getElementById(id);
 let nextTabId = 1;
@@ -315,9 +315,9 @@ export class App {
       node.setAttribute("role", "tab");
       node.setAttribute("aria-selected", String(tab === this.activeTab));
       node.dataset.tab = tab.id;
-      node.title = tab.panes.map((p) => p.path ?? p.initialPath).join("\n");
+      node.title = shown(tab.panes.map((p) => p.path ?? p.initialPath).join("\n"));
       const label = el("span", "tab-label");
-      label.textContent = tab.panes.map((p) => p.title() || this.folderLabel(p.initialPath)).join(" | ");
+      label.textContent = shown(tab.panes.map((p) => p.title() || this.folderLabel(p.initialPath)).join(" | "));
       const close = el("button", "tab-close", Icons.ui("close"));
       close.title = this.tabs.length > 1 ? `Close Tab (${shortcuts.closeTab})` : "Close Window";
       close.addEventListener("pointerdown", (ev) => ev.stopPropagation());
@@ -456,8 +456,8 @@ export class App {
   paneChanged(pane, { statusOnly = false } = {}) {
     if (!statusOnly) {
       pane.header.innerHTML = `${Icons.ui("folder")}<span></span>`;
-      pane.header.querySelector("span").textContent = pane.title();
-      pane.header.title = pane.path ?? "";
+      pane.header.querySelector("span").textContent = shown(pane.title());
+      pane.header.title = shown(pane.path ?? "");
       this.renderTabs();
     }
     if (pane !== this.pane) return;
@@ -484,20 +484,20 @@ export class App {
     for (const b of e.sidebar.querySelectorAll(".place")) b.classList.toggle("active", b.dataset.path === pane.path);
     this.updateStatus();
     this.syncMenu();
-    document.title = pane.path ? `${pane.title()} — Sonar` : "Sonar";
+    document.title = pane.path ? shown(`${pane.title()} — Sonar`) : "Sonar";
   }
 
   updateStatus() {
     if (this.flashTimer) return; // a transient message is showing
     const s = this.pane?.statusText() ?? { left: "", right: "" };
-    this.els.statusLeft.textContent = s.left;
+    this.els.statusLeft.textContent = shown(s.left);
     this.els.statusRight.textContent = s.right;
     this.els.statusRight.title = s.rightTitle ?? "";
   }
 
   flashStatus(text) {
     clearTimeout(this.flashTimer);
-    this.els.statusLeft.textContent = text;
+    this.els.statusLeft.textContent = shown(text);
     this.flashTimer = setTimeout(() => {
       this.flashTimer = 0;
       this.updateStatus();
@@ -600,7 +600,10 @@ export class App {
         ev.preventDefault();
         const pane = this.pane;
         try {
-          const target = await invoke("resolve_path", { input: input.value, cwd: pane.path ?? "/" });
+          // Unedited, the shown path may have U+FFFD for bytes that aren't text: use the real one.
+          const target = pane.path && input.value === shown(pane.path)
+            ? pane.path
+            : await invoke("resolve_path", { input: input.value, cwd: pane.path ?? "/" });
           if (await pane.navigate(target)) {
             this.endEditLocation();
             pane.scroller.focus();
@@ -621,7 +624,7 @@ export class App {
       const li = el("li");
       const btn = el("button", "crumb");
       btn.dataset.path = c.path;
-      btn.title = c.path;
+      btn.title = shown(c.path);
       if (c.icon) btn.innerHTML = Icons.ui(c.icon === "root" ? "drive" : c.icon);
       if (c.label !== "/") btn.append(c.label);
       if (i === list.length - 1) btn.setAttribute("aria-current", "page");
@@ -636,7 +639,7 @@ export class App {
     const { crumbs, input } = this.els;
     crumbs.hidden = true;
     input.hidden = false;
-    input.value = this.pane?.path ?? "";
+    input.value = shown(this.pane?.path ?? "");
     input.focus();
     input.select();
   }
@@ -746,14 +749,14 @@ export class App {
         row.setAttribute("role", "button");
         row.dataset.path = p.path;
         const text = el("div", "place-text");
-        text.append(Object.assign(el("span", "place-label"), { textContent: p.label }));
+        text.append(Object.assign(el("span", "place-label"), { textContent: shown(p.label) }));
         if (p.usage?.total) {
           const used = 1 - p.usage.free / p.usage.total;
           const bar = el("div", `usage${used > 0.9 ? " full" : ""}`, `<div style="width:${(used * 100).toFixed(1)}%"></div>`);
           text.append(bar);
           row.title = `${p.label}: ${Fmt.bytes(p.usage.free)} free of ${Fmt.bytes(p.usage.total)}`;
         } else {
-          row.title = p.mounted ? p.path : `${p.label} (${p.device}) — click to mount`;
+          row.title = shown(p.mounted ? p.path : `${p.label} (${p.device}) — click to mount`);
         }
         row.append(text);
         if (p.ejectable) {

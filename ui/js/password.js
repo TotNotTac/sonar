@@ -2,7 +2,7 @@
 // (with the archive's path); we ask, hand the password over for the session,
 // and the caller retries.
 
-import { basename, el, invoke } from "./util.js";
+import { basename, el, invoke, shown } from "./util.js";
 
 const pending = new Map(); // archive path -> Promise<boolean>, so parallel requests ask once
 
@@ -19,7 +19,7 @@ export function askPassword(path, wrong = false) {
         <button type="submit" class="btn primary" value="ok">OK</button>
       </div>
     </form>`;
-  dlg.querySelector(".dialog-title").textContent = `“${basename(path)}” is password protected`;
+  dlg.querySelector(".dialog-title").textContent = shown(`“${basename(path)}” is password protected`);
   const msg = dlg.querySelector(".dialog-message");
   msg.textContent = wrong ? "That password is not correct. Try again." : "Enter the password to open its contents.";
   msg.classList.toggle("error", wrong);

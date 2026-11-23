@@ -6,6 +6,7 @@ use serde::Serialize;
 #[serde(rename_all = "camelCase")]
 pub struct Crumb {
     pub label: String,
+    #[serde(with = "crate::uipath::path")]
     pub path: PathBuf,
     /// Icon hint for the first crumb: "root" or "home". `None` for the rest.
     pub icon: Option<&'static str>,

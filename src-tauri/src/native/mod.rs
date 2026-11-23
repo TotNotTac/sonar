@@ -3,11 +3,11 @@
 //! Toolkit-free platform code lives in `sonar_core::platform`; the clipboard
 //! data formats live in `sonar_core::clipboard`.
 
-use std::path::PathBuf;
 use std::sync::mpsc;
 
 use serde::Serialize;
 use sonar_core::clipboard::FileClip;
+use sonar_core::uipath::{self, UiPath};
 use sonar_core::CoreError;
 use tauri::{AppHandle, Emitter, WebviewWindow};
 
@@ -76,7 +76,8 @@ struct DragOutEnded {
 /// decides what to do with it. Drops back onto Sonar arrive as Tauri's
 /// regular drag-drop events.
 #[tauri::command]
-pub async fn start_drag_out(app: AppHandle, window: WebviewWindow, paths: Vec<PathBuf>) -> Result<(), CoreError> {
+pub async fn start_drag_out(app: AppHandle, window: WebviewWindow, paths: Vec<UiPath>) -> Result<(), CoreError> {
+    let paths = uipath::paths(paths);
     let icon = include_bytes!("../../icons/64x64.png").to_vec();
     let notify = app.clone();
     let result = on_main(&app, move || {

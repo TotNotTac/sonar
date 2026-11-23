@@ -98,7 +98,7 @@ impl Serialize for CoreError {
         st.serialize_field("code", self.code())?;
         st.serialize_field("message", &self.to_string())?;
         if let Self::PasswordRequired { archive, wrong } = self {
-            st.serialize_field("path", archive)?;
+            st.serialize_field("path", &crate::uipath::encode(archive.as_os_str()))?;
             st.serialize_field("wrong", wrong)?;
         }
         st.end()

@@ -26,6 +26,7 @@ pub enum ClipMode {
 #[serde(rename_all = "camelCase")]
 pub struct FileClip {
     pub mode: ClipMode,
+    #[serde(with = "crate::uipath::vec")]
     pub paths: Vec<PathBuf>,
 }
 

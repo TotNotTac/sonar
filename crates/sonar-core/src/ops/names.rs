@@ -37,6 +37,7 @@ pub fn available_name(dir: &Path, name: &str, is_dir: bool) -> PathBuf {
 /// First free name of the form `stem (n).ext` in `dir`, KIO-style.
 /// `photo.jpg` -> `photo (1).jpg`; `photo (1).jpg` -> `photo (2).jpg`.
 /// Folders and dot-files without a further extension keep the whole name as stem.
+/// `name` may be [`crate::uipath`]-encoded, so names that aren't UTF-8 keep their bytes.
 pub fn keep_both_name(dir: &Path, name: &str, is_dir: bool) -> PathBuf {
     let (stem, ext) = split_ext(name, is_dir);
     let (base, mut n) = match parse_counter(stem) {
@@ -48,7 +49,7 @@ pub fn keep_both_name(dir: &Path, name: &str, is_dir: bool) -> PathBuf {
             Some(ext) => format!("{base} ({n}).{ext}"),
             None => format!("{base} ({n})"),
         };
-        let p = dir.join(&candidate);
+        let p = dir.join(crate::uipath::decode(&candidate));
         if !exists(&p) {
             return p;
         }
@@ -103,5 +104,15 @@ mod tests {
         assert_eq!(name(keep_both_name(p, "my.folder", true)), "my.folder (1)");
         assert_eq!(name(keep_both_name(p, ".bashrc", false)), ".bashrc (1)");
         assert_eq!(name(available_name(p, "free", true)), "free");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn keep_both_keeps_bytes_that_are_not_text() {
+        use std::os::unix::ffi::OsStrExt;
+        let d = tempfile::tempdir().unwrap();
+        let raw = std::ffi::OsStr::from_bytes(b"caf\xe9.txt");
+        let got = keep_both_name(d.path(), &crate::uipath::encode(raw), false);
+        assert_eq!(got.file_name().unwrap().as_bytes(), b"caf\xe9 (1).txt");
     }
 }

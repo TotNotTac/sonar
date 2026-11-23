@@ -112,28 +112,28 @@ pub fn volume_usage(_path: &Path) -> Option<Usage> {
 
 /// Paths of the user's standard folders, for platform-specific folder icons.
 pub(crate) fn special_folder(path: &Path) -> Option<&'static str> {
-    let is = |d: Option<std::path::PathBuf>| d.as_deref() == Some(path);
-    if is(dirs::home_dir()) {
-        Some("home")
-    } else if is(dirs::desktop_dir()) {
-        Some("desktop")
-    } else if is(dirs::document_dir()) {
-        Some("documents")
-    } else if is(dirs::download_dir()) {
-        Some("downloads")
-    } else if is(dirs::audio_dir()) {
-        Some("music")
-    } else if is(dirs::picture_dir()) {
-        Some("pictures")
-    } else if is(dirs::video_dir()) {
-        Some("videos")
-    } else if is(dirs::public_dir()) {
-        Some("public")
-    } else if is(trash_dir()) {
-        Some("trash")
-    } else {
-        None
+    // Looking the folders up reads ~/.config/user-dirs.dirs on Linux; doing that
+    // for every folder in a listing made big folders slow. Refresh now and then
+    // so changes still show up.
+    type Folders = Vec<(std::path::PathBuf, &'static str)>;
+    static CACHE: std::sync::Mutex<Option<(Instant, Folders)>> = std::sync::Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap_or_else(|p| p.into_inner());
+    if cache.as_ref().is_none_or(|(at, _)| at.elapsed() > Duration::from_secs(5)) {
+        let folders = [
+            (dirs::home_dir(), "home"),
+            (dirs::desktop_dir(), "desktop"),
+            (dirs::document_dir(), "documents"),
+            (dirs::download_dir(), "downloads"),
+            (dirs::audio_dir(), "music"),
+            (dirs::picture_dir(), "pictures"),
+            (dirs::video_dir(), "videos"),
+            (dirs::public_dir(), "public"),
+            (trash_dir(), "trash"),
+        ];
+        *cache = Some((Instant::now(), folders.into_iter().filter_map(|(p, k)| Some((p?, k))).collect()));
     }
+    // First match wins, so Home stays Home when e.g. the Desktop setting points at it.
+    cache.as_ref().and_then(|(_, f)| f.iter().find(|(p, _)| p == path)).map(|(_, k)| *k)
 }
 
 /// A `Command` for a program of the host system, not of our bundle.

@@ -21,7 +21,9 @@ pub enum EntryKind {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Entry {
+    /// Encoded for the UI (see [`crate::uipath`]), so it joins onto the encoded folder path.
     pub name: String,
+    #[serde(with = "crate::uipath::path")]
     pub path: PathBuf,
     pub kind: EntryKind,
     pub is_symlink: bool,
@@ -53,7 +55,7 @@ impl Entry {
     /// kind/size/mtime, matching how Dolphin presents them.
     pub(crate) fn from_dir_entry(de: &fs::DirEntry, hidden: &HiddenRules, count_children: bool) -> Option<Self> {
         let path = de.path();
-        let name = de.file_name().to_string_lossy().into_owned();
+        let name = crate::uipath::encode(&de.file_name());
         let link_meta = de.metadata().ok()?; // does not follow symlinks
         let is_symlink = link_meta.file_type().is_symlink();
         let target_meta = if is_symlink { fs::metadata(&path).ok() } else { Some(link_meta.clone()) };

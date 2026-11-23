@@ -1,6 +1,8 @@
 // Modal dialogs (conflicts, confirmations). Dialogs are queued so concurrent
 // jobs can never stack them.
 
+import { shown } from "./util.js";
+
 let chain = Promise.resolve();
 
 /**
@@ -28,16 +30,16 @@ function show({ title, message = "", details = [], buttons, checkbox }) {
         <label class="dialog-check" hidden><input type="checkbox" /> <span></span></label>
         <div class="dialog-buttons"></div>
       </form>`;
-    dlg.querySelector(".dialog-title").textContent = title;
+    dlg.querySelector(".dialog-title").textContent = shown(title);
     const msg = dlg.querySelector(".dialog-message");
-    msg.textContent = message;
+    msg.textContent = shown(message);
     msg.hidden = !message;
     const dl = dlg.querySelector(".dialog-details");
     for (const [k, v] of details) {
       const dt = document.createElement("dt");
       const dd = document.createElement("dd");
       dt.textContent = k;
-      dd.textContent = v;
+      dd.textContent = shown(v);
       dl.append(dt, dd);
     }
     dl.hidden = !details.length;

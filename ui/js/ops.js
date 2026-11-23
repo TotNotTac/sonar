@@ -4,7 +4,7 @@
 
 import { ask } from "./dialog.js";
 import { Fmt } from "./format.js";
-import { basename, el, errMsg, invoke, isMac, isMod, listen, modLabel, parentOf, plural } from "./util.js";
+import { basename, el, errMsg, invoke, isMac, isMod, listen, modLabel, parentOf, plural, shown } from "./util.js";
 import { obtainPassword } from "./password.js";
 import { settings } from "./store.js";
 
@@ -34,15 +34,17 @@ export class Ops {
     pane.setFocus(i);
 
     const input = el("input", "rename-input");
-    input.value = e.name;
+    // Bytes that aren't text show as U+FFFD; typing over them gives a text name.
+    const original = shown(e.name);
+    input.value = original;
     input.spellcheck = false;
     input.autocomplete = "off";
     label.replaceWith(input);
     pane.renaming = { path: e.path };
     input.focus();
     // Select the name without its extension, like Dolphin.
-    const dot = pane.isFolder(e) ? -1 : e.name.lastIndexOf(".");
-    input.setSelectionRange(0, dot > 0 ? dot : e.name.length);
+    const dot = pane.isFolder(e) ? -1 : original.lastIndexOf(".");
+    input.setSelectionRange(0, dot > 0 ? dot : original.length);
 
     let busy = false;
     const end = () => {
@@ -57,7 +59,7 @@ export class Ops {
     const commit = async (fromBlur) => {
       if (busy || !pane.renaming) return;
       const newName = input.value;
-      if (newName === e.name || !newName.trim()) return cancel();
+      if (newName === original || !newName.trim()) return cancel();
       busy = true;
       try {
         const to = await invoke("rename_entry", { path: e.path, newName });
@@ -207,7 +209,7 @@ export class Ops {
   copyLocation(pane = this.pane) {
     const items = pane.selectedEntries();
     const paths = items.length ? items.map((e) => e.path) : [pane.path];
-    invoke("clipboard_write_text", { text: paths.join("\n") })
+    invoke("clipboard_write_text", { text: paths.map(shown).join("\n") })
       .then(() => this.app.flashStatus(paths.length === 1 ? `Copied “${paths[0]}”` : `Copied ${paths.length} locations`))
       .catch((err) => pane.showMessage(errMsg(err)));
   }
@@ -238,7 +240,7 @@ export class Ops {
       <div class="job-text"><div class="job-title"></div><div class="job-detail">Preparing…</div></div>
       <div class="job-bar"><div class="job-fill"></div></div>
       <button class="tool job-cancel" title="Cancel">×</button>`);
-    node.querySelector(".job-title").textContent = meta.title;
+    node.querySelector(".job-title").textContent = shown(meta.title);
     node.querySelector(".job-cancel").addEventListener("click", () => invoke("cancel_job", { id }));
     this.jobsEl.append(node);
     this.jobsEl.hidden = false;
@@ -315,7 +317,7 @@ export class Ops {
     parts.push(`${p.doneItems} of ${plural(p.totalItems, "item")}`);
     if (job.speed > 1024) parts.push(`${Fmt.bytes(Math.round(job.speed))}/s`);
     if (p.current) parts.push(p.current);
-    job.el.querySelector(".job-detail").textContent = parts.join(" · ");
+    job.el.querySelector(".job-detail").textContent = shown(parts.join(" · "));
   }
 
   finishJob(job, result) {

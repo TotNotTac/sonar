@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use serde::{Deserialize, Serialize};
 use sonar_core::archive;
 use sonar_core::ops::{self, Conflict, ConflictChoice, Progress, TransferKind, TransferObserver, UndoAction};
+use sonar_core::uipath::{self, UiPath};
 use sonar_core::CoreError;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -61,25 +62,33 @@ pub struct BatchReport {
 // ---------- Simple operations ----------
 
 #[tauri::command]
-pub async fn rename_entry(app: AppHandle, path: PathBuf, new_name: String) -> Result<PathBuf, CoreError> {
+pub async fn rename_entry(app: AppHandle, path: UiPath, new_name: String) -> Result<UiPath, CoreError> {
+    let path = path.0;
     let from = path.clone();
+    // The UI shows undecodable bytes as U+FFFD, so a typed name is normally
+    // plain text; one that still carries encoded bytes is decoded like a path.
+    let new_name = uipath::decode(&new_name)
+        .into_string()
+        .map_err(|_| CoreError::InvalidName("The name contains characters that are not valid text".into()))?;
     let to = blocking(move || ops::rename(&path, &new_name)).await??;
     if to != from {
         app.state::<OpsState>().push_undo(UndoAction::Rename { from, to: to.clone() });
     }
-    Ok(to)
+    Ok(to.into())
 }
 
 /// Create "New Folder" (or "New Folder (n)") in `dir`; the UI then starts an inline rename.
 #[tauri::command]
-pub async fn create_folder(app: AppHandle, dir: PathBuf) -> Result<PathBuf, CoreError> {
+pub async fn create_folder(app: AppHandle, dir: UiPath) -> Result<UiPath, CoreError> {
+    let dir = dir.0;
     let path = blocking(move || ops::new_folder(&dir)).await??;
     app.state::<OpsState>().push_undo(UndoAction::NewFolder(path.clone()));
-    Ok(path)
+    Ok(path.into())
 }
 
 #[tauri::command]
-pub async fn trash_entries(app: AppHandle, paths: Vec<PathBuf>) -> Result<BatchReport, CoreError> {
+pub async fn trash_entries(app: AppHandle, paths: Vec<UiPath>) -> Result<BatchReport, CoreError> {
+    let paths = uipath::paths(paths);
     let (receipts, errors) = blocking(move || {
         let mut receipts = Vec::new();
         let mut errors = Vec::new();
@@ -101,7 +110,8 @@ pub async fn trash_entries(app: AppHandle, paths: Vec<PathBuf>) -> Result<BatchR
 
 /// Permanent delete. The UI confirms first; this cannot be undone.
 #[tauri::command]
-pub async fn delete_entries(paths: Vec<PathBuf>) -> Result<BatchReport, CoreError> {
+pub async fn delete_entries(paths: Vec<UiPath>) -> Result<BatchReport, CoreError> {
+    let paths = uipath::paths(paths);
     blocking(move || {
         let mut report = BatchReport { done: 0, errors: Vec::new() };
         for p in &paths {
@@ -161,6 +171,7 @@ struct JobFinished {
     completed: usize,
     errors: Vec<String>,
     /// Top-level items the job created (for selecting them afterwards).
+    #[serde(with = "uipath::vec")]
     created: Vec<PathBuf>,
     /// An encrypted archive stopped the job: ask for its password and retry.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -169,6 +180,7 @@ struct JobFinished {
 
 #[derive(Clone, Serialize)]
 struct NeedsPassword {
+    #[serde(with = "uipath::path")]
     path: PathBuf,
     wrong: bool,
 }
@@ -219,7 +231,9 @@ impl TransferObserver for EventObserver {
 #[serde(rename_all = "camelCase")]
 pub struct TransferRequest {
     kind: TransferKind,
+    #[serde(with = "uipath::vec")]
     sources: Vec<PathBuf>,
+    #[serde(with = "uipath::path")]
     dest_dir: PathBuf,
 }
 
@@ -347,9 +361,11 @@ fn spawn_job(
 pub fn start_extract(
     app: AppHandle,
     state: State<'_, OpsState>,
-    archives: Vec<PathBuf>,
-    dest_dir: Option<PathBuf>,
+    archives: Vec<UiPath>,
+    dest_dir: Option<UiPath>,
 ) -> u64 {
+    let archives = uipath::paths(archives);
+    let dest_dir = dest_dir.map(PathBuf::from);
     spawn_job(app, &state, move |app, id, cancel| {
         let mut created = Vec::new();
         let mut errors = Vec::new();
@@ -389,9 +405,10 @@ pub fn start_extract(
 pub fn start_compress(
     app: AppHandle,
     state: State<'_, OpsState>,
-    sources: Vec<PathBuf>,
+    sources: Vec<UiPath>,
     format: archive::Format,
 ) -> u64 {
+    let sources = uipath::paths(sources);
     spawn_job(app, &state, move |app, id, cancel| {
         let new = || JobFinished::new(id, "compress");
         let Some(parent) = sources.first().and_then(|s| s.parent()) else {

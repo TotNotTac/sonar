@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
+use sonar_core::uipath::{self, UiPath};
 use sonar_core::{breadcrumbs, CoreError, Crumb, DirWatcher, ListOptions, Listing, Place, SortKey};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -51,6 +52,7 @@ pub struct DirView {
     /// Set when live updates couldn't be enabled; the listing is still valid.
     watch_error: Option<String>,
     /// When browsing inside an archive: the archive file (contents are read-only).
+    #[serde(with = "uipath::opt")]
     archive: Option<PathBuf>,
 }
 
@@ -67,6 +69,7 @@ struct ChildCounts {
 #[derive(Clone, Serialize)]
 struct DirChanged {
     pane: String,
+    #[serde(with = "uipath::path")]
     path: PathBuf,
 }
 
@@ -77,13 +80,14 @@ pub async fn get_places() -> Result<Vec<Place>, CoreError> {
 
 /// Mount an attached device (Linux, via udisks). Returns where it was mounted.
 #[tauri::command]
-pub async fn mount_device(device: String) -> Result<PathBuf, CoreError> {
-    blocking(move || sonar_core::platform::mount_device(&device)).await?
+pub async fn mount_device(device: String) -> Result<UiPath, CoreError> {
+    blocking(move || sonar_core::platform::mount_device(&device)).await?.map(UiPath)
 }
 
 /// Eject a removable volume (or unmount a network share).
 #[tauri::command]
-pub async fn eject_volume(path: PathBuf) -> Result<(), CoreError> {
+pub async fn eject_volume(path: UiPath) -> Result<(), CoreError> {
+    let path = path.0;
     blocking(move || sonar_core::platform::eject_volume(&path)).await?
 }
 
@@ -131,9 +135,10 @@ pub async fn open_dir(
     app: AppHandle,
     state: State<'_, ViewState>,
     pane: String,
-    path: PathBuf,
+    path: UiPath,
     options: Option<ListOptions>,
 ) -> Result<DirView, CoreError> {
+    let path = path.0;
     let counter = state.panes().entry(pane.clone()).or_default().generation.clone();
     let generation = counter.fetch_add(1, Ordering::SeqCst) + 1;
     let mut options = options.unwrap_or_default();
@@ -244,7 +249,8 @@ fn count_children(
 
 /// Open a file (or macOS app bundle) with the system's default handler.
 #[tauri::command]
-pub async fn open_path(path: PathBuf) -> Result<(), CoreError> {
+pub async fn open_path(path: UiPath) -> Result<(), CoreError> {
+    let path = path.0;
     tauri::async_runtime::spawn_blocking(move || {
         // A file inside an archive: extract just that file to a temp folder first.
         let real = match sonar_core::archive::split_virtual(&path) {
@@ -260,19 +266,21 @@ pub async fn open_path(path: PathBuf) -> Result<(), CoreError> {
 /// Remember the password for an encrypted archive (for this session), after
 /// an operation failed with `passwordRequired`.
 #[tauri::command]
-pub fn set_archive_password(path: PathBuf, password: String) {
+pub fn set_archive_password(path: UiPath, password: String) {
+    let path = path.0;
     sonar_core::archive::set_password(&path, &password);
 }
 
 /// Resolve text typed into the editable location bar.
 #[tauri::command]
-pub fn resolve_path(input: String, cwd: PathBuf) -> Result<PathBuf, CoreError> {
-    sonar_core::resolve_user_path(&input, &cwd)
+pub fn resolve_path(input: String, cwd: UiPath) -> Result<UiPath, CoreError> {
+    let cwd = cwd.0;
+    sonar_core::resolve_user_path(&input, &cwd).map(UiPath)
 }
 
 #[tauri::command]
-pub fn home_dir() -> Option<PathBuf> {
-    dirs::home_dir()
+pub fn home_dir() -> Option<UiPath> {
+    dirs::home_dir().map(UiPath)
 }
 
 // ---------- Search ----------
@@ -301,10 +309,11 @@ pub fn start_search(
     app: AppHandle,
     state: State<'_, SearchState>,
     pane: String,
-    root: PathBuf,
+    root: UiPath,
     query: String,
     show_hidden: bool,
 ) -> u64 {
+    let root = root.0;
     let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let generation = {
         let mut map = state.0.lock().unwrap_or_else(|p| p.into_inner());
@@ -357,7 +366,8 @@ struct SizeProgress {
 }
 
 #[tauri::command]
-pub async fn get_properties(paths: Vec<PathBuf>) -> Result<Vec<sonar_core::properties::Properties>, CoreError> {
+pub async fn get_properties(paths: Vec<UiPath>) -> Result<Vec<sonar_core::properties::Properties>, CoreError> {
+    let paths = uipath::paths(paths);
     tauri::async_runtime::spawn_blocking(move || paths.iter().map(|p| sonar_core::properties::properties(p)).collect())
         .await
         .map_err(|e| CoreError::Other(e.to_string()))?
@@ -365,7 +375,8 @@ pub async fn get_properties(paths: Vec<PathBuf>) -> Result<Vec<sonar_core::prope
 
 /// Total size and item counts of `paths`, streamed as `size-progress` events.
 #[tauri::command]
-pub fn start_size(app: AppHandle, jobs: State<'_, SizeJobs>, token: String, paths: Vec<PathBuf>) {
+pub fn start_size(app: AppHandle, jobs: State<'_, SizeJobs>, token: String, paths: Vec<UiPath>) {
+    let paths = uipath::paths(paths);
     let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
     jobs.0.lock().unwrap_or_else(|p| p.into_inner()).insert(token.clone(), cancel.clone());
     std::thread::spawn(move || {
@@ -389,21 +400,24 @@ pub fn cancel_size(jobs: State<'_, SizeJobs>, token: String) {
 // ---------- Open With ----------
 
 #[tauri::command]
-pub async fn apps_for(path: PathBuf) -> Result<Vec<sonar_core::platform::AppInfo>, CoreError> {
+pub async fn apps_for(path: UiPath) -> Result<Vec<sonar_core::platform::AppInfo>, CoreError> {
+    let path = path.0;
     tauri::async_runtime::spawn_blocking(move || sonar_core::platform::apps_for(&path))
         .await
         .map_err(|e| CoreError::Other(e.to_string()))
 }
 
 #[tauri::command]
-pub async fn open_with(paths: Vec<PathBuf>, app: String) -> Result<(), CoreError> {
+pub async fn open_with(paths: Vec<UiPath>, app: String) -> Result<(), CoreError> {
+    let paths = uipath::paths(paths);
     tauri::async_runtime::spawn_blocking(move || sonar_core::platform::open_with(&paths, &app))
         .await
         .map_err(|e| CoreError::Other(e.to_string()))?
 }
 
 #[tauri::command]
-pub async fn set_default_app(path: PathBuf, app: String) -> Result<(), CoreError> {
+pub async fn set_default_app(path: UiPath, app: String) -> Result<(), CoreError> {
+    let path = path.0;
     tauri::async_runtime::spawn_blocking(move || sonar_core::platform::set_default_app(&path, &app))
         .await
         .map_err(|e| CoreError::Other(e.to_string()))?

@@ -16,6 +16,7 @@ pub enum PlaceSection {
 #[serde(rename_all = "camelCase")]
 pub struct Place {
     pub label: String,
+    #[serde(with = "crate::uipath::path")]
     pub path: PathBuf,
     /// Icon hint: home, desktop, documents, downloads, music, pictures,
     /// videos, trash, drive, root, removable, network.

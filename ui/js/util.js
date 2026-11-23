@@ -32,8 +32,14 @@ export function assetUrl(kind, params) {
 export const basename = (p) => p.replace(/\/+$/, "").split("/").pop() || p;
 export const parentOf = (p) => p.replace(/\/[^/]*\/?$/, "") || "/";
 
+// Names and paths from the backend carry bytes that aren't valid UTF-8 as
+// characters U+10FF00–U+10FFFF (see sonar-core's uipath.rs). They stay that
+// way wherever paths are used, and show as U+FFFD wherever text is displayed.
+const ENCODED_BYTE = /[\u{10FF00}-\u{10FFFF}]/gu;
+export const shown = (s) => (s == null ? s : String(s).replace(ENCODED_BYTE, "\uFFFD"));
+
 export const esc = (s) =>
-  s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  shown(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
 export const plural = (n, one, many = `${one}s`) => (n === 1 ? `1 ${one}` : `${n} ${many}`);
 export const errMsg = (err) => err?.message ?? String(err);

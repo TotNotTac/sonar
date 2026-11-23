@@ -5,6 +5,7 @@
 // or the string "-" for a separator.
 
 import { Icons } from "./icons.js";
+import { shown } from "./util.js";
 
 let current = null; // { root, close }
 
@@ -49,7 +50,7 @@ export function showMenu(x, y, items) {
         <span class="menu-label"></span>
         <span class="menu-shortcut"></span>
         <span class="menu-arrow">${it.submenu ? Icons.ui("chevron") : ""}</span>`;
-      row.querySelector(".menu-label").textContent = it.label;
+      row.querySelector(".menu-label").textContent = shown(it.label);
       row.querySelector(".menu-icon")?.addEventListener("error", (e) => e.target.remove());
       row.querySelector(".menu-shortcut").textContent = it.shortcut ?? "";
       row._item = it;

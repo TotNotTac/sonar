@@ -2,7 +2,7 @@
 // for that file type.
 
 import { Icons } from "./icons.js";
-import { assetUrl, el, errMsg, invoke, plural } from "./util.js";
+import { assetUrl, el, errMsg, invoke, plural, shown } from "./util.js";
 
 export async function openWith(app, pane, appId, { makeDefault = false } = {}) {
   const items = pane.selectedEntries();
@@ -35,7 +35,7 @@ export async function chooseApp(app, pane, apps = null) {
         <button type="button" class="btn primary" value="open">Open</button>
       </div>
     </form>`;
-  dlg.querySelector(".dialog-title").textContent = `Open ${what} with`;
+  dlg.querySelector(".dialog-title").textContent = shown(`Open ${what} with`);
   dlg.querySelector(".dialog-check span").textContent = `Always use this app for ${items[0].typeLabel} files`;
   const list = dlg.querySelector(".app-list");
   let chosen = apps.find((a) => a.isDefault)?.id ?? apps[0]?.id;

@@ -2,6 +2,7 @@
 //! into commands (Desktop Entry Specification, "The Exec key"). Pure
 //! functions; used by the Linux "Open With" support and tested everywhere.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -113,16 +114,17 @@ pub fn split_exec(exec: &str) -> Vec<String> {
 
 /// The commands to run to open `files` with this entry. `%f`/`%u` take one
 /// file, so several files mean several commands; `%F`/`%U` take them all.
-pub fn commands(entry: &DesktopEntry, desktop_file: &Path, files: &[PathBuf]) -> Vec<Vec<String>> {
+/// Arguments are `OsString`s so file names that aren't UTF-8 pass through intact.
+pub fn commands(entry: &DesktopEntry, desktop_file: &Path, files: &[PathBuf]) -> Vec<Vec<OsString>> {
     let template = split_exec(&entry.exec);
     let single = template.iter().any(|a| a.contains("%f") || a.contains("%u"));
     let groups: Vec<&[PathBuf]> = if single && files.len() > 1 { files.chunks(1).collect() } else { vec![files] };
     groups.into_iter().map(|group| expand(&template, entry, desktop_file, group)).collect()
 }
 
-fn expand(template: &[String], entry: &DesktopEntry, desktop_file: &Path, files: &[PathBuf]) -> Vec<String> {
-    let paths = || files.iter().map(|f| f.to_string_lossy().into_owned());
-    let uris = || files.iter().map(|f| crate::clipboard::path_to_uri(f));
+fn expand(template: &[String], entry: &DesktopEntry, desktop_file: &Path, files: &[PathBuf]) -> Vec<OsString> {
+    let paths = || files.iter().map(|f| f.as_os_str().to_owned());
+    let uris = || files.iter().map(|f| OsString::from(crate::clipboard::path_to_uri(f)));
     let mut out = Vec::new();
     for arg in template {
         match arg.as_str() {
@@ -134,24 +136,24 @@ fn expand(template: &[String], entry: &DesktopEntry, desktop_file: &Path, files:
             "%i" => {
                 if let Some(icon) = &entry.icon {
                     out.push("--icon".into());
-                    out.push(icon.clone());
+                    out.push(icon.into());
                 }
             }
             _ => {
                 // Field codes inside an argument; deprecated ones vanish.
-                let mut s = String::new();
+                let mut s = OsString::new();
                 let mut chars = arg.chars();
                 while let Some(c) = chars.next() {
                     if c != '%' {
-                        s.push(c);
+                        s.push(c.encode_utf8(&mut [0; 4]));
                         continue;
                     }
                     match chars.next() {
-                        Some('%') => s.push('%'),
+                        Some('%') => s.push("%"),
                         Some('f') => s.extend(paths().next()),
                         Some('u') => s.extend(uris().next()),
-                        Some('c') => s.push_str(&entry.name),
-                        Some('k') => s.push_str(&desktop_file.to_string_lossy()),
+                        Some('c') => s.push(&entry.name),
+                        Some('k') => s.push(desktop_file),
                         _ => {}
                     }
                 }
@@ -208,5 +210,20 @@ mod tests {
             commands(&fancy, k, &files[..1]),
             [vec!["app", "--icon", "okular", "--title=Okular", "--file=/tmp/a b.pdf", "100%"]]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_files_pass_through() {
+        use std::os::unix::ffi::OsStringExt;
+        let bad = PathBuf::from(OsString::from_vec(b"/tmp/caf\xe9.pdf".to_vec()));
+        let k = Path::new("/x.desktop");
+        let e = DesktopEntry { name: "App".into(), exec: "app %f --file=%f %U".into(), ..Default::default() };
+        let cmd = commands(&e, k, std::slice::from_ref(&bad)).remove(0);
+        let mut joined = b"--file=".to_vec();
+        joined.extend(bad.as_os_str().as_encoded_bytes());
+        assert_eq!(cmd[1], bad.as_os_str());
+        assert_eq!(cmd[2], OsString::from_vec(joined));
+        assert_eq!(cmd[3], "file:///tmp/caf%E9.pdf");
     }
 }

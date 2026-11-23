@@ -3,7 +3,7 @@
 import { Fmt } from "./format.js";
 import { Icons } from "./icons.js";
 import { saveViewProps, settings, viewPropsFor } from "./store.js";
-import { childNameOnPath, el, errMsg, invoke, isMac, isMod, plural } from "./util.js";
+import { childNameOnPath, el, errMsg, invoke, isMac, isMod, plural, shown } from "./util.js";
 import { VIEWS } from "./views.js";
 import { obtainPassword } from "./password.js";
 
@@ -760,7 +760,7 @@ export class Pane {
   // ---------- Messages and status ----------
 
   showMessage(text) {
-    this.message.querySelector(".message-text").textContent = text;
+    this.message.querySelector(".message-text").textContent = shown(text);
     this.message.hidden = false;
   }
 

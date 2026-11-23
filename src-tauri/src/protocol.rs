@@ -28,11 +28,14 @@ fn respond(request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
             Some(icon) => ok(icon.content_type, icon.bytes.clone(), "max-age=86400"),
             None => not_found(),
         },
-        "/thumb" => match q.get("path").map(|p| sonar_core::thumbnail::thumbnail(p.as_ref(), size)) {
-            // Thumbnails change when the file does; let the browser revalidate.
-            Some(Ok(png)) => ok("image/png", png, "no-cache"),
-            _ => not_found(),
-        },
+        "/thumb" => {
+            match q.get("path").map(|p| sonar_core::thumbnail::thumbnail(sonar_core::uipath::decode(p).as_ref(), size))
+            {
+                // Thumbnails change when the file does; let the browser revalidate.
+                Some(Ok(png)) => ok("image/png", png, "no-cache"),
+                _ => not_found(),
+            }
+        }
         _ => not_found(),
     }
 }

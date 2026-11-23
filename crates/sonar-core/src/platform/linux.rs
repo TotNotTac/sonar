@@ -9,6 +9,7 @@ use xdg_mime::SharedMimeInfo;
 use super::{cstring, AppInfo, Icon, NativeType};
 use crate::entry::EntryKind;
 use crate::error::{CoreError, Result};
+use crate::mimeglob::GlobIndex;
 use crate::places::{Place, PlaceSection};
 use crate::volumes;
 
@@ -214,6 +215,12 @@ fn mime_db() -> &'static Mutex<SharedMimeInfo> {
     DB.get_or_init(|| Mutex::new(SharedMimeInfo::new()))
 }
 
+/// File name -> MIME type, built once from the shared-mime-info globs.
+fn glob_index() -> &'static GlobIndex {
+    static INDEX: OnceLock<GlobIndex> = OnceLock::new();
+    INDEX.get_or_init(|| GlobIndex::load(&data_dirs()))
+}
+
 /// MIME type, description and icon names for a file, by name (like Dolphin's
 /// fast path; no content sniffing).
 pub fn native_type(name: &str, path: &Path, kind: EntryKind) -> NativeType {
@@ -223,24 +230,40 @@ pub fn native_type(name: &str, path: &Path, kind: EntryKind) -> NativeType {
             type_id: Some("inode/directory".into()),
             icon_key: Some(folder_icon(path).into()),
         },
-        EntryKind::File => {
-            let db = mime_db().lock().unwrap_or_else(|p| p.into_inner());
-            let Some(mime) = db.get_mime_types_from_file_name(name).into_iter().next() else {
-                return NativeType {
-                    label: None,
-                    type_id: Some("application/octet-stream".into()),
-                    icon_key: Some("application-octet-stream,unknown".into()),
-                };
-            };
-            let id = mime.essence_str().to_string();
-            let mut icons = db.lookup_icon_names(&mime);
-            icons.extend(db.lookup_generic_icon_name(&mime));
-            icons.push("unknown".into());
-            icons.dedup();
-            NativeType { label: mime_comment(&id), icon_key: Some(icons.join(",")), type_id: Some(id) }
-        }
+        EntryKind::File => match glob_index().lookup(name) {
+            Some(mime) => mime_type_info(mime),
+            None => NativeType {
+                label: None,
+                type_id: Some("application/octet-stream".into()),
+                icon_key: Some("application-octet-stream,unknown".into()),
+            },
+        },
         EntryKind::BrokenSymlink | EntryKind::Other => NativeType::default(),
     }
+}
+
+/// Description and icon names for a MIME type, looked up once per type.
+fn mime_type_info(mime: &str) -> NativeType {
+    static CACHE: OnceLock<Mutex<HashMap<String, NativeType>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(hit) = cache.lock().unwrap_or_else(|p| p.into_inner()).get(mime) {
+        return hit.clone();
+    }
+    let icons = match mime.parse() {
+        Ok(parsed) => {
+            let db = mime_db().lock().unwrap_or_else(|p| p.into_inner());
+            let mut icons = db.lookup_icon_names(&parsed);
+            icons.extend(db.lookup_generic_icon_name(&parsed));
+            icons
+        }
+        Err(_) => Vec::new(),
+    };
+    let mut icons: Vec<String> = icons.into_iter().chain(["unknown".to_string()]).collect();
+    icons.dedup();
+    let info =
+        NativeType { label: mime_comment(mime), icon_key: Some(icons.join(",")), type_id: Some(mime.to_string()) };
+    cache.lock().unwrap_or_else(|p| p.into_inner()).insert(mime.to_string(), info.clone());
+    info
 }
 
 fn folder_icon(path: &Path) -> &'static str {

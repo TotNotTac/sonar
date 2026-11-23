@@ -3,7 +3,7 @@
 
 import { Fmt } from "./format.js";
 import { Icons } from "./icons.js";
-import { assetUrl, basename, el, errMsg, invoke, listen, parentOf, plural } from "./util.js";
+import { assetUrl, basename, el, errMsg, invoke, listen, parentOf, plural, shown } from "./util.js";
 
 const handlers = new Map(); // size job token -> update function
 listen("size-progress", ({ payload }) => handlers.get(payload.token)?.(payload));
@@ -49,7 +49,7 @@ export async function showProperties(app, pane) {
     img.addEventListener("error", () => img.remove());
     icon.append(img);
   }
-  dlg.querySelector(".dialog-title").textContent = single ? single.name : plural(props.length, "item");
+  dlg.querySelector(".dialog-title").textContent = single ? shown(single.name) : plural(props.length, "item");
 
   const grid = dlg.querySelector(".props-grid");
   const row = (label, value, cls = "") => {
@@ -57,7 +57,7 @@ export async function showProperties(app, pane) {
     const dt = el("dt");
     const dd = el("dd", cls);
     dt.textContent = label;
-    dd.textContent = value;
+    dd.textContent = shown(value);
     grid.append(dt, dd);
     return dd;
   };

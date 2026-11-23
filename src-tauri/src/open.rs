@@ -19,6 +19,7 @@ pub const EVENT_OPEN_PATHS: &str = "open-paths";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenRequest {
+    #[serde(with = "sonar_core::uipath::path")]
     pub folder: PathBuf,
     /// Name of an item in `folder` to select (when a file was requested).
     pub select: Option<String>,
@@ -37,7 +38,7 @@ pub fn to_request(path: &Path) -> Option<OpenRequest> {
         return Some(OpenRequest { folder: path.to_path_buf(), select: None });
     }
     let folder = path.parent()?.to_path_buf();
-    let select = path.file_name().map(|n| n.to_string_lossy().into_owned());
+    let select = path.file_name().map(sonar_core::uipath::encode);
     Some(OpenRequest { folder, select })
 }
 
@@ -47,7 +48,7 @@ pub fn to_reveal_request(path: &Path) -> Option<OpenRequest> {
     let path: &Path = &path.components().collect::<PathBuf>();
     std::fs::symlink_metadata(path).ok()?;
     let folder = path.parent()?.to_path_buf();
-    Some(OpenRequest { folder, select: path.file_name().map(|n| n.to_string_lossy().into_owned()) })
+    Some(OpenRequest { folder, select: path.file_name().map(sonar_core::uipath::encode) })
 }
 
 /// Show `paths` in the window, or queue them until it's ready.

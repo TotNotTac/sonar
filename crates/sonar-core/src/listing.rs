@@ -22,7 +22,9 @@ pub struct ListOptions {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Listing {
+    #[serde(with = "crate::uipath::path")]
     pub path: PathBuf,
+    #[serde(with = "crate::uipath::opt")]
     pub parent: Option<PathBuf>,
     pub entries: Vec<Entry>,
     /// Entries filtered out because they are hidden.

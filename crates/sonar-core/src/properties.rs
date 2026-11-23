@@ -15,6 +15,7 @@ use crate::filetype;
 #[serde(rename_all = "camelCase")]
 pub struct Properties {
     pub name: String,
+    #[serde(with = "crate::uipath::path")]
     pub path: PathBuf,
     /// "file", "folder", "symlink" or "other".
     pub kind: &'static str,
@@ -31,6 +32,7 @@ pub struct Properties {
     pub mode: Option<String>,
     pub owner: Option<String>,
     pub group: Option<String>,
+    #[serde(with = "crate::uipath::opt")]
     pub link_target: Option<PathBuf>,
 }
 

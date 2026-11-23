@@ -13,7 +13,7 @@
 
 import { Icons } from "./icons.js";
 import { showMenu } from "./menu.js";
-import { el, errMsg, invoke, isMac, listen, parentOf, plural } from "./util.js";
+import { el, errMsg, invoke, isMac, listen, parentOf, plural, shown } from "./util.js";
 
 const THRESHOLD = 5;
 const TAB_HOVER_MS = 600;
@@ -68,7 +68,7 @@ export class DragDrop {
     this.drag = { pane, paths: items.map((e) => e.path), folders: !pane.view?.archive && items.every((e) => pane.isFolder(e)) };
     const label = items.length === 1 ? items[0].name : plural(items.length, "item");
     this.ghost = el("div", "drag-ghost", `${Icons.entry(items.length === 1 ? items[0].icon : "file")}<span></span>`);
-    this.ghost.querySelector("span").textContent = label;
+    this.ghost.querySelector("span").textContent = shown(label);
     this.ghost.style.transform = `translate(${ev.clientX + 14}px, ${ev.clientY + 10}px)`;
     document.body.append(this.ghost);
     document.body.classList.add("dragging-items");
