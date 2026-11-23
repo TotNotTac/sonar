@@ -409,21 +409,28 @@ export class App {
   // ---------- Split view ----------
 
   toggleSplit(tab = this.activeTab) {
-    if (tab.panes.length === 2) {
-      // Close the inactive side; keep the one being worked in.
-      const drop = tab.panes[1 - tab.active];
-      drop.close();
-      tab.panes = [tab.panes[tab.active]];
-      tab.active = 0;
-    } else {
-      const from = tab.panes[0];
-      this.createPane(tab, from.path ?? this.home);
-      tab.active = 1;
-    }
-    tab.el.classList.toggle("split", tab.panes.length === 2);
+    // Closing keeps the side being worked in.
+    if (tab.panes.length === 2) return this.closeSplitPane(tab.panes[1 - tab.active]);
+    const from = tab.panes[0];
+    this.createPane(tab, from.path ?? this.home);
+    tab.active = 1;
+    tab.el.classList.add("split");
     this.renderTabs();
     this.updateChrome();
     this.pane.scroller.focus();
+  }
+
+  /** Close one side of a split view (its × button); the other side stays. */
+  closeSplitPane(pane) {
+    const tab = this.tabOf(pane);
+    if (!tab || tab.panes.length < 2) return;
+    pane.close();
+    tab.panes = tab.panes.filter((p) => p !== pane);
+    tab.active = 0;
+    tab.el.classList.remove("split");
+    this.renderTabs();
+    this.updateChrome();
+    if (tab === this.activeTab) this.pane.scroller.focus();
   }
 
   /** Show `path` in the other side of the split, creating the split if needed. */
@@ -455,7 +462,8 @@ export class App {
   /** Called by a pane after it navigates or its selection changes. */
   paneChanged(pane, { statusOnly = false } = {}) {
     if (!statusOnly) {
-      pane.header.innerHTML = `${Icons.ui("folder")}<span></span>`;
+      pane.header.innerHTML = `${Icons.ui("folder")}<span></span>
+        <button class="tool pane-close" title="Close this side">${Icons.ui("close")}</button>`;
       pane.header.querySelector("span").textContent = shown(pane.title());
       pane.header.title = shown(pane.path ?? "");
       this.renderTabs();

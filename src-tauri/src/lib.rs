@@ -14,6 +14,8 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             open::handle(app, sonar_core::paths::paths_from_args(argv.get(1..).unwrap_or_default(), cwd.as_ref()));
         }))
+        // Window size, position and maximized state, saved on close and restored at start.
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(commands::ViewState::default())
         .manage(commands::SearchState::default())
         .manage(commands::SizeJobs::default())

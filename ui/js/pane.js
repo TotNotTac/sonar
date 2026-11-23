@@ -79,7 +79,10 @@ export class Pane {
     // Any interaction makes this the active pane.
     this.root.addEventListener("mousedown", () => this.app.activate(this), true);
     this.root.addEventListener("focusin", () => this.app.activate(this));
-    this.header.addEventListener("click", () => this.scroller.focus());
+    this.header.addEventListener("click", (ev) => {
+      if (ev.target.closest(".pane-close")) this.app.closeSplitPane(this);
+      else this.scroller.focus();
+    });
 
     this.scroller.addEventListener("mousedown", (ev) => this.onMouseDown(ev));
     // load/error don't bubble, so listen in the capture phase. A loaded OS

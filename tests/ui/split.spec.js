@@ -53,3 +53,23 @@ test("Open in Split View from a folder's context menu", async ({ page }) => {
   await expect(panes(page)).toHaveCount(2);
   await expectPath(page, `${HOME}/Pictures`);
 });
+
+test("each side of a split has a close button", async ({ page }) => {
+  await page.keyboard.press("F3");
+  await page.locator(".place", { hasText: "Downloads" }).click();
+  await expect(panes(page).first().locator(".pane-close")).toBeVisible();
+
+  // Closing the inactive (left) side keeps the right one, active or not.
+  await panes(page).first().locator(".pane-close").click();
+  await expect(panes(page)).toHaveCount(1);
+  await expectPath(page, `${HOME}/Downloads`);
+  await expect(page.locator(".pane-close")).toBeHidden(); // no header without a split
+  await expect(page.locator(".tab.active")).toHaveText("Downloads");
+
+  // And closing the active side keeps the other one.
+  await page.keyboard.press("F3");
+  await page.locator(".place", { hasText: "Music" }).click();
+  await panes(page).nth(1).locator(".pane-close").click();
+  await expect(panes(page)).toHaveCount(1);
+  await expectPath(page, `${HOME}/Downloads`);
+});

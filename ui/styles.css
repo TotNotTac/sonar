@@ -231,7 +231,10 @@ svg.stroke { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: 
   white-space: nowrap;
   overflow: hidden;
 }
-.pane-header span { overflow: hidden; text-overflow: ellipsis; }
+.pane-header span { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.pane-close { width: 20px; height: 20px; margin-right: -6px; color: var(--text-dim); }
+.pane-close svg { width: 12px; height: 12px; }
+.pane-close:hover { background: var(--button-hover); color: var(--text); }
 .tab-panes.split .pane-header { display: flex; }
 .tab-panes.split .pane.active .pane-header { border-top-color: var(--accent); color: var(--text); }
 .tab-panes.split .pane:not(.active) .scroller { opacity: 0.85; }
