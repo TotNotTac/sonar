@@ -14,6 +14,7 @@ serde_json.workspace = true
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 png = "0.18"
 md-5 = "0.11"
+nucleo-matcher = "0.3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

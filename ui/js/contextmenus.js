@@ -13,7 +13,8 @@ const keys = {
   copyLocation: shortcut("mod+alt+C"),
   pasteMove: shortcut("mod+alt+V"),
   hidden: isMac ? shortcut("mod+shift+.") : "Ctrl+H",
-  filter: isMac ? shortcut("mod+F") : "Ctrl+I",
+  filter: isMac ? shortcut("mod+alt+F") : "Ctrl+I",
+  search: shortcut("mod+F"),
   icons: shortcut("mod+1"),
   details: isMac ? shortcut("mod+2") : "Ctrl+3",
   newTab: shortcut("mod+T"),
@@ -51,6 +52,10 @@ export function itemsMenu(app, pane, info = {}) {
   };
   return [
     { label: "Open", shortcut: "Enter", action: () => pane.openSelection() },
+    pane.search && one && {
+      label: "Open Containing Folder",
+      action: () => pane.navigate(one.path.slice(0, one.path.lastIndexOf("/")) || "/", { select: one.name }),
+    },
     folder && { label: "Open in New Tab", action: () => app.newTab(folder.path, { activate: false }) },
     folder && { label: "Open in Split View", action: () => app.openInSplit(folder.path) },
     archives && { label: "Open With Default App", action: () => sel.forEach((e) => invoke("open_path", { path: e.path }).catch(() => {})) },
@@ -108,6 +113,7 @@ export function backgroundMenu(app, pane, { undoLabel = null, canPaste = false }
     { label: "Show Hidden Files", shortcut: keys.hidden, checked: app.showHidden, action: () => app.toggleHidden() },
     "-",
     { label: "Copy Location", shortcut: keys.copyLocation, action: () => ops.copyLocation(pane) },
+    { label: "Search…", shortcut: keys.search, action: () => pane.showSearch() },
     { label: "Filter…", shortcut: keys.filter, action: () => pane.showFilter() },
     { label: "Open in New Tab", shortcut: keys.newTab, action: () => app.newTab(pane.path) },
     { label: split ? "Close Split View" : "Split View", shortcut: "F3", action: () => app.toggleSplit() },
@@ -133,6 +139,7 @@ export function appMenu(app) {
     },
     { label: "Show Hidden Files", shortcut: keys.hidden, checked: app.showHidden, action: run("show-hidden") },
     { label: "Split View", shortcut: "F3", checked: split, action: run("split") },
+    { label: "Search…", shortcut: keys.search, action: run("search") },
     { label: "Filter…", shortcut: keys.filter, action: run("filter") },
     "-",
     {

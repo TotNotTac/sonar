@@ -23,7 +23,7 @@ test("background menu with submenus, driven by keyboard", async ({ page }) => {
   await page.mouse.click(box.x + 300, box.y + box.height - 40, { button: "right" });
   await expect(menuLabels(page)).toHaveText([
     "New Folder…", "Paste", "Undo", "View Mode", "Sort By", "Show Hidden Files",
-    "Copy Location", "Filter…", "Open in New Tab", "Split View",
+    "Copy Location", "Search…", "Filter…", "Open in New Tab", "Split View",
   ]);
   // Down to "View Mode" (disabled items are skipped), open it, pick "Icons".
   for (let i = 0; i < 2; i++) await page.keyboard.press("ArrowDown");

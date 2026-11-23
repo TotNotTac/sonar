@@ -269,3 +269,68 @@ pub fn resolve_path(input: String, cwd: PathBuf) -> Result<PathBuf, CoreError> {
 pub fn home_dir() -> Option<PathBuf> {
     dirs::home_dir()
 }
+
+// ---------- Search ----------
+
+pub const EVENT_SEARCH_RESULTS: &str = "search-results";
+
+/// One running search per pane; starting another cancels it.
+#[derive(Default)]
+pub struct SearchState(Mutex<HashMap<String, (u64, Arc<std::sync::atomic::AtomicBool>)>>);
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchResults {
+    pane: String,
+    generation: u64,
+    hits: Vec<sonar_core::search::Hit>,
+    folders_scanned: u64,
+    done: bool,
+    summary: Option<sonar_core::search::SearchSummary>,
+}
+
+/// Search below `root` for `query`; results stream as `search-results`
+/// events tagged with the returned generation.
+#[tauri::command]
+pub fn start_search(
+    app: AppHandle,
+    state: State<'_, SearchState>,
+    pane: String,
+    root: PathBuf,
+    query: String,
+    show_hidden: bool,
+) -> u64 {
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let generation = {
+        let mut map = state.0.lock().unwrap_or_else(|p| p.into_inner());
+        let entry = map.entry(pane.clone()).or_insert((0, cancel.clone()));
+        entry.1.store(true, Ordering::Relaxed); // stop the previous search
+        *entry = (entry.0 + 1, cancel.clone());
+        entry.0
+    };
+    std::thread::Builder::new()
+        .name("sonar-search".into())
+        .spawn(move || {
+            let emit = |hits, folders_scanned, done, summary| {
+                let payload = SearchResults { pane: pane.clone(), generation, hits, folders_scanned, done, summary };
+                let _ = app.emit(EVENT_SEARCH_RESULTS, payload);
+            };
+            let summary = sonar_core::search::search(&root, &query, show_hidden, &cancel, &mut |hits, scanned| {
+                if !hits.is_empty() {
+                    emit(hits, scanned, false, None);
+                }
+            });
+            if !summary.cancelled {
+                emit(Vec::new(), summary.folders_scanned, true, Some(summary));
+            }
+        })
+        .expect("failed to spawn search thread");
+    generation
+}
+
+#[tauri::command]
+pub fn cancel_search(state: State<'_, SearchState>, pane: String) {
+    if let Some((_, cancel)) = state.0.lock().unwrap_or_else(|p| p.into_inner()).get(&pane) {
+        cancel.store(true, Ordering::Relaxed);
+    }
+}

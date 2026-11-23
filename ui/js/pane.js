@@ -53,7 +53,27 @@ export class Pane {
        <span class="filter-count"></span><button class="tool filter-close" title="Close filter (Esc)">${Icons.ui("close")}</button>`);
     this.filterBar.hidden = true;
     this.filterInput = this.filterBar.querySelector("input");
-    this.root.append(this.header, this.message, this.scroller, this.filterBar);
+    this.searchBar = el("div", "searchbar",
+      `${Icons.ui("search")}<input type="text" spellcheck="false" autocomplete="off" />
+       <span class="search-status"></span><button class="tool search-close" title="Close search (Esc)">${Icons.ui("close")}</button>`);
+    this.searchBar.hidden = true;
+    this.searchInput = this.searchBar.querySelector("input");
+    this.root.append(this.header, this.searchBar, this.message, this.scroller, this.filterBar);
+
+    this.searchInput.addEventListener("input", () => {
+      clearTimeout(this.searchTimer);
+      this.searchTimer = setTimeout(() => this.runSearch(this.searchInput.value), 200);
+    });
+    this.searchInput.addEventListener("keydown", (ev) => {
+      ev.stopPropagation();
+      if (ev.key === "Escape") { ev.preventDefault(); this.hideSearch(); }
+      if (ev.key === "Enter" || ev.key === "ArrowDown") {
+        ev.preventDefault();
+        if (this.items.length && this.focus < 0) this.setFocus(0);
+        this.scroller.focus();
+      }
+    });
+    this.searchBar.querySelector(".search-close").addEventListener("click", () => this.hideSearch());
 
     // Any interaction makes this the active pane.
     this.root.addEventListener("mousedown", () => this.app.activate(this), true);
@@ -237,6 +257,17 @@ export class Pane {
    * position (live refresh); `onError(err)` replaces the message bar.
    */
   async navigate(path, { mode = "push", select = null, preserveScroll = false, onError = null } = {}) {
+    if (this.search) {
+      // Refreshing the searched folder (after a rename, trash, ...) re-runs the search;
+      // going anywhere else ends it.
+      if (path === this.search.root && mode === "replace") {
+        await this.runSearch(this.search.query, { keepSelection: true });
+        return true;
+      }
+      this.endSearch();
+      this.searchBar.hidden = true;
+      this.searchInput.value = "";
+    }
     const id = ++this.requestId;
     const previous = this.path;
     const props = path === previous ? this.props : viewPropsFor(path);
@@ -352,7 +383,119 @@ export class Pane {
   }
 
   onDirChanged({ path }) {
-    if (path === this.path) this.liveRefresh();
+    if (path === this.path && !this.search) this.liveRefresh();
+  }
+
+  // ---------- Search ----------
+
+  showSearch() {
+    if (this.view?.archive) {
+      this.app.flashStatus("Search isn't available inside archives");
+      return;
+    }
+    if (!this.search) this.searchRoot = this.path;
+    this.searchBar.hidden = false;
+    this.searchInput.placeholder = `Search in “${this.app.folderLabel(this.searchRoot)}”…`;
+    this.searchInput.focus();
+    this.searchInput.select();
+  }
+
+  hideSearch() {
+    clearTimeout(this.searchTimer);
+    const searching = !!this.search;
+    this.endSearch();
+    this.searchBar.hidden = true;
+    this.searchInput.value = "";
+    if (searching) this.navigate(this.searchRoot, { mode: "replace" });
+    this.scroller.focus();
+  }
+
+  endSearch() {
+    if (this.search) invoke("cancel_search", { pane: this.id }).catch(() => {});
+    this.search = null;
+    this.searchSort = null;
+  }
+
+  async runSearch(query, { keepSelection = false } = {}) {
+    query = query.trim();
+    if (!query) {
+      if (this.search) {
+        this.endSearch();
+        await this.navigate(this.searchRoot, { mode: "replace" });
+      }
+      return;
+    }
+    if (!this.search) this.folderView = this.view;
+    const keep = keepSelection ? this.selectedPaths() : null;
+    const generation = await invoke("start_search", {
+      pane: this.id, root: this.searchRoot, query, showHidden: this.app.showHidden,
+    });
+    this.search = { query, root: this.searchRoot, generation, hits: [], done: false, scanned: 0, truncated: false };
+    this.showSearchResults(keep);
+    this.app.paneChanged(this);
+  }
+
+  onSearchResults({ generation, hits, foldersScanned, done, summary }) {
+    const s = this.search;
+    if (!s || generation !== s.generation) return; // an older search
+    s.hits.push(...hits);
+    s.scanned = foldersScanned;
+    if (done) {
+      s.done = true;
+      s.truncated = !!summary?.truncated;
+    }
+    this.showSearchResults(this.selectedPaths(), true);
+    this.app.paneChanged(this, { statusOnly: true });
+  }
+
+  showSearchResults(keepPaths, preserveScroll = false) {
+    const s = this.search;
+    const base = this.folderView ?? this.view;
+    const scrollTop = this.scroller.scrollTop;
+    this.view = { ...base, path: s.root, entries: this.sortHits(s.hits), hiddenCount: 0, archive: null, searching: true };
+    this.computeItems();
+    this.render();
+    this.selected = new Set();
+    this.focus = this.anchor = -1;
+    if (keepPaths?.size) {
+      this.items.forEach((e, i) => { if (keepPaths.has(e.path)) this.selected.add(i); });
+      this.focus = this.anchor = [...this.selected][0] ?? -1;
+    }
+    this.renderSelection();
+    if (preserveScroll) this.scroller.scrollTop = scrollTop;
+    const n = s.hits.length;
+    this.searchBar.querySelector(".search-status").textContent =
+      !s.done ? `Searching… ${n}` : s.truncated ? `First ${n} results` : plural(n, "result");
+  }
+
+  /** Best matches first, unless a column header was clicked. */
+  sortHits(hits) {
+    const sorted = [...hits];
+    const sort = this.searchSort;
+    if (!sort) return sorted.sort((a, b) => b.score - a.score || a.path.length - b.path.length || a.name.localeCompare(b.name));
+    const key = {
+      name: (e) => e.name.toLowerCase(),
+      size: (e) => e.size ?? -1,
+      modified: (e) => e.modified ?? 0,
+      type: (e) => this.relativeFolder(e.path),
+    }[sort.key];
+    const dir = sort.order === "descending" ? -1 : 1;
+    return sorted.sort((a, b) => {
+      const x = key(a), y = key(b);
+      return (x < y ? -1 : x > y ? 1 : a.name.localeCompare(b.name, undefined, { numeric: true })) * dir;
+    });
+  }
+
+  /** Folder of a search result, relative to where the search started. */
+  relativeFolder(path) {
+    const root = this.search?.root ?? this.path;
+    const dir = path.slice(0, path.lastIndexOf("/")) || "/";
+    if (dir === root) return "";
+    return dir.startsWith(`${root}/`) ? dir.slice(root.length + 1) : dir;
+  }
+
+  selectedPaths() {
+    return new Set(this.selectedEntries().map((e) => e.path));
   }
 
   async liveRefresh() {
@@ -444,6 +587,11 @@ export class Pane {
   }
 
   setSort(sort) {
+    if (this.search) {
+      this.searchSort = sort; // results only; the folder's own sort is unchanged
+      this.showSearchResults(this.selectedPaths(), true);
+      return;
+    }
     this.props = { ...this.props, sort };
     saveViewProps(this.path, this.props);
     this.reload();
@@ -451,7 +599,7 @@ export class Pane {
 
   /** Header click: same column flips the order, a new column starts at its natural order. */
   toggleSort(key) {
-    const s = this.props.sort;
+    const s = (this.search ? this.searchSort : this.props.sort) ?? { key: null, order: "ascending" };
     this.setSort(s.key === key
       ? { key, order: s.order === "ascending" ? "descending" : "ascending" }
       : { key, order: key === "modified" ? "descending" : "ascending" });
@@ -597,11 +745,16 @@ export class Pane {
       left = `"${e.name}" selected${detail ? ` (${detail})` : ""}`;
     } else if (this.selected.size > 1) {
       left = `${this.selected.size} items selected — ${summarize(this.selectedEntries())}`;
+    } else if (this.search) {
+      const s = this.search;
+      left = `${s.done ? "" : "Searching… "}${plural(this.items.length, "result")} for “${s.query}”`;
+      if (s.truncated) left += " (stopped at 10,000; refine the search)";
     } else {
       left = summarize(this.items);
       if (this.filter) left = `${left} — filtered from ${plural(v.entries.length, "item")}`;
     }
     const right = [];
+    if (this.search) right.push(`in “${this.app.folderLabel(this.search.root)}”`);
     if (!this.app.showHidden && v.hiddenCount) right.push(`${v.hiddenCount} hidden`);
     if (v.watchError) right.push("Live updates off");
     if (v.archive) right.push("Read-only archive");
@@ -613,6 +766,7 @@ export class Pane {
   }
 
   close() {
+    this.endSearch();
     this.closed = true;
     this.viewImpl?.dispose();
     this.root.remove();

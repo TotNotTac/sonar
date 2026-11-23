@@ -6,7 +6,7 @@ test.beforeEach(({ page }) => openApp(page));
 test("☰ menu (no native menu bar) drives the same actions", async ({ page }) => {
   await page.locator("#btn-menu").click();
   await expect(page.locator(".menu").first().locator(".menu-label")).toHaveText([
-    "New Tab", "New Folder…", "Reopen Closed Tab", "View Mode", "Show Hidden Files", "Split View", "Filter…",
+    "New Tab", "New Folder…", "Reopen Closed Tab", "View Mode", "Show Hidden Files", "Split View", "Search…", "Filter…",
     "Go", "Copy Location", "Close Window",
   ]);
   await page.locator(".menu-item", { hasText: "Split View" }).click();

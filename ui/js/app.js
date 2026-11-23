@@ -50,6 +50,7 @@ export class App {
     this.initTabBar();
     listen("child-counts", ({ payload }) => this.findPane(payload.pane)?.onCounts(payload));
     listen("dir-changed", ({ payload }) => this.findPane(payload.pane)?.onDirChanged(payload));
+    listen("search-results", ({ payload }) => this.findPane(payload.pane)?.onSearchResults(payload));
   }
 
   async start() {
@@ -105,6 +106,7 @@ export class App {
       "show-hidden": () => this.toggleHidden(),
       split: () => this.toggleSplit(),
       filter: () => this.pane.showFilter(),
+      search: () => this.pane.showSearch(),
       reload: () => this.pane.reload(),
       back: () => this.pane.goBack(),
       forward: () => this.pane.goForward(),
@@ -792,7 +794,9 @@ export class App {
     if (k === "F3") return run(() => this.toggleSplit());
     if (mod && !ev.shiftKey && ev.code === "Digit1") return run(() => this.setViewMode("icons"));
     if (mod && !ev.shiftKey && (ev.code === "Digit2" || ev.code === "Digit3")) return run(() => this.setViewMode("details"));
-    if ((!isMac && ev.ctrlKey && lower === "i") || (isMac && ev.metaKey && lower === "f")) return run(() => pane.showFilter());
+    // Search: ⌘F / Ctrl+F (Finder, Dolphin). Filter: Ctrl+I (Dolphin) / ⌥⌘F (⌘I is Get Info on macOS).
+    if (mod && !ev.altKey && !ev.shiftKey && lower === "f") return run(() => pane.showSearch());
+    if ((!isMac && ev.ctrlKey && lower === "i") || (isMac && ev.metaKey && ev.altKey && ev.code === "KeyF")) return run(() => pane.showFilter());
     // Match the physical key for "." : with Shift held, ev.key is ">" on most layouts.
     if ((ev.ctrlKey && lower === "h") || (isMac && ev.metaKey && ev.shiftKey && ev.code === "Period") || (ev.altKey && ev.code === "Period"))
       return run(() => this.toggleHidden());

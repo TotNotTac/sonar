@@ -15,6 +15,7 @@ pub fn run() {
             open::handle(app, sonar_core::paths::paths_from_args(argv.get(1..).unwrap_or_default(), cwd.as_ref()));
         }))
         .manage(commands::ViewState::default())
+        .manage(commands::SearchState::default())
         .manage(open::OpenQueue::default())
         .manage(ops::OpsState::default())
         .register_asynchronous_uri_scheme_protocol(protocol::SCHEME, protocol::handle)
@@ -35,6 +36,8 @@ pub fn run() {
             commands::get_places,
             commands::open_dir,
             commands::close_pane,
+            commands::start_search,
+            commands::cancel_search,
             commands::mount_device,
             menu::has_native_menu,
             menu::set_menu_state,

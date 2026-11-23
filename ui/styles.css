@@ -676,3 +676,32 @@ body.dragging-items, body.dragging-items * { cursor: grabbing !important; }
 body.platform-macos .toolbar { padding-left: 84px; min-height: 48px; }
 /* The ☰ menu is for platforms without a native menu bar. */
 body.native-menu #btn-menu { display: none; }
+
+/* ---------- Search ---------- */
+
+.searchbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--window);
+  color: var(--text-dim);
+}
+.searchbar input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  outline: none;
+  background: var(--view);
+  color: var(--text);
+  font: inherit;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.search-status { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.searchbar .tool { width: 26px; height: 26px; }
+td.location { direction: rtl; text-align: left; } /* ellipsize the start of long paths */

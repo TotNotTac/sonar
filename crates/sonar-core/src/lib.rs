@@ -15,6 +15,7 @@ pub mod ops;
 pub mod paths;
 pub mod places;
 pub mod platform;
+pub mod search;
 pub mod sort;
 pub mod thumbnail;
 pub mod volumes;

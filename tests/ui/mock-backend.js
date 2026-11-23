@@ -190,6 +190,7 @@
   // ---------- Undo ----------
 
   const undoStack = [];
+  const searchGens = new Map();
   function move(from, to) {
     for (const p of descendants(from).sort()) {
       const node = fs.get(p);
@@ -460,6 +461,27 @@
       if (window.__mock.clipboard?.mode === "cut") window.__mock.clipboard = null;
     },
     start_drag_out: ({ paths }) => { window.__mock.dragOuts.push(paths); },
+    start_search: ({ pane, root, query, showHidden }) => {
+      const generation = (searchGens.get(pane) ?? 0) + 1;
+      searchGens.set(pane, generation);
+      const q = query.toLowerCase();
+      const hits = descendants(root)
+        .filter((p) => p !== root && nameOf(p).toLowerCase().includes(q))
+        .filter((p) => showHidden || !p.slice(root.length).split("/").some((part) => part.startsWith(".")))
+        .map((p) => ({ ...entry(p, false), score: 1000 - p.split("/").length * 10 - nameOf(p).length }));
+      // Stream like the real search: two batches, then "done".
+      const send = (batch, done) => {
+        if (searchGens.get(pane) !== generation) return; // cancelled
+        emit("search-results", { pane, generation, hits: batch, foldersScanned: 3, done,
+          summary: done ? { found: hits.length, foldersScanned: 3, truncated: false, cancelled: false } : null });
+      };
+      const half = Math.ceil(hits.length / 2);
+      setTimeout(() => send(hits.slice(0, half), false), window.__mock.searchDelay);
+      setTimeout(() => send(hits.slice(half), false), window.__mock.searchDelay * 2);
+      setTimeout(() => send([], true), window.__mock.searchDelay * 3);
+      return generation;
+    },
+    cancel_search: ({ pane }) => { searchGens.set(pane, (searchGens.get(pane) ?? 0) + 1000); },
     has_native_menu: () => window.__mock.nativeMenu,
     take_open_requests: () => window.__mock.openRequests.splice(0),
     set_menu_state: ({ state }) => { window.__mock.menuState = state; },
@@ -481,6 +503,7 @@
     archiveEntries: (p) => archives.get(p),
     busy: new Set(),
     nativeMenu: false,
+    searchDelay: 20,
     /** Folders "the OS" asked to show at startup (Sonar as default file manager). */
     openRequests: [],
     /** Simulate a later request (Finder, `sonar <folder>` while running). */

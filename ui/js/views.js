@@ -65,9 +65,14 @@ export class DetailsView {
         <td class="name" title="${esc(e.name)}"><div class="name-cell"><span class="ficon">${entryIcon(e, 18)}</span><span class="name-label">${esc(e.name)}</span></div></td>
         <td class="num">${sizeText(e)}</td>
         <td>${Fmt.date(e.modified)}</td>
-        <td title="${esc(e.typeLabel)}">${esc(e.typeLabel)}</td>
+        ${pane.search
+          ? `<td class="location" title="${esc(e.path)}">${esc(pane.relativeFolder(e.path))}</td>`
+          : `<td title="${esc(e.typeLabel)}">${esc(e.typeLabel)}</td>`}
       </tr>`).join("");
-    const { key, order } = pane.props.sort;
+    // In search results the 4th column shows where each result is.
+    const typeHeader = this.root.querySelector('th[data-key="type"]');
+    typeHeader.textContent = pane.search ? "Location" : "Type";
+    const { key, order } = (pane.search ? pane.searchSort : pane.props.sort) ?? {};
     for (const th of this.root.querySelectorAll("th")) {
       if (th.dataset.key === key) th.setAttribute("aria-sort", order);
       else th.removeAttribute("aria-sort");
@@ -97,7 +102,7 @@ export class IconsView {
 
   render() {
     const pane = this.pane;
-    this.root.innerHTML = pane.items.map((e, i) => `<div data-i="${i}"${itemClasses(pane, e)} title="${esc(e.name)}">
+    this.root.innerHTML = pane.items.map((e, i) => `<div data-i="${i}"${itemClasses(pane, e)} title="${esc(pane.search ? e.path : e.name)}">
         <span class="ficon big">${entryIcon(e, 48, { thumbnail: true })}</span>
         <span class="tile-label">${esc(e.name)}</span>
       </div>`).join("");

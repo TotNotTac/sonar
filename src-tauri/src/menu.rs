@@ -44,7 +44,11 @@ const VIEW_CHECKS: &[Item] = &[
     ("show-hidden", "Show Hidden Files", Some("CmdOrCtrl+Shift+Period")),
     ("split", "Split View", Some("F3")),
 ];
-const VIEW_ITEMS: &[Item] = &[("filter", "Filter…", Some("CmdOrCtrl+F")), ("reload", "Reload", Some("CmdOrCtrl+R"))];
+const VIEW_ITEMS: &[Item] = &[
+    ("search", "Find…", Some("CmdOrCtrl+F")),
+    ("filter", "Filter…", Some("CmdOrCtrl+Alt+F")),
+    ("reload", "Reload", Some("CmdOrCtrl+R")),
+];
 const GO: &[Item] = &[
     ("back", "Back", Some("CmdOrCtrl+BracketLeft")),
     ("forward", "Forward", Some("CmdOrCtrl+BracketRight")),
