@@ -1,0 +1,188 @@
+//! Thin Tauri layer over `sonar_core`. Keep logic in the core crate.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
+
+use serde::Serialize;
+use sonar_core::{breadcrumbs, CoreError, Crumb, DirWatcher, ListOptions, Listing, Place, SortKey};
+use tauri::{AppHandle, Emitter, State};
+
+/// Emitted when the folder a pane shows changes on disk.
+pub const EVENT_DIR_CHANGED: &str = "dir-changed";
+/// Emitted in batches as folder item counts are computed after a listing.
+pub const EVENT_CHILD_COUNTS: &str = "child-counts";
+
+/// Per-pane backend state. A pane is one folder view; a tab holds one or two
+/// (split view). Pane ids are chosen by the frontend.
+#[derive(Default)]
+pub struct ViewState {
+    panes: Mutex<HashMap<String, PaneSlot>>,
+}
+
+#[derive(Default)]
+struct PaneSlot {
+    /// Bumped on every `open_dir` for this pane; background count jobs from
+    /// an older generation stop as soon as they notice.
+    generation: Arc<AtomicU64>,
+    watcher: Option<DirWatcher>,
+}
+
+impl ViewState {
+    fn panes(&self) -> MutexGuard<'_, HashMap<String, PaneSlot>> {
+        self.panes.lock().unwrap_or_else(|p| p.into_inner())
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirView {
+    #[serde(flatten)]
+    listing: Listing,
+    crumbs: Vec<Crumb>,
+    /// Matches `generation` on the `child-counts` events for this listing.
+    generation: u64,
+    /// False if folder item counts will arrive later via `child-counts`.
+    counts_complete: bool,
+    /// Set when live updates couldn't be enabled; the listing is still valid.
+    watch_error: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChildCounts {
+    pane: String,
+    generation: u64,
+    /// `(entry name, count)`; count is `None` for unreadable folders.
+    counts: Vec<(String, Option<u64>)>,
+    done: bool,
+}
+
+#[derive(Clone, Serialize)]
+struct DirChanged {
+    pane: String,
+    path: PathBuf,
+}
+
+#[tauri::command]
+pub fn get_places() -> Vec<Place> {
+    sonar_core::places()
+}
+
+/// List a folder for a pane, watch it for changes, and count its
+/// subfolders' items in the background.
+#[tauri::command]
+pub async fn open_dir(
+    app: AppHandle,
+    state: State<'_, ViewState>,
+    pane: String,
+    path: PathBuf,
+    options: Option<ListOptions>,
+) -> Result<DirView, CoreError> {
+    let counter = state.panes().entry(pane.clone()).or_default().generation.clone();
+    let generation = counter.fetch_add(1, Ordering::SeqCst) + 1;
+    let mut options = options.unwrap_or_default();
+    // Sorting folders by size needs every count up front.
+    options.count_children = options.sort.key == SortKey::Size;
+
+    let listing = {
+        let path = path.clone();
+        tauri::async_runtime::spawn_blocking(move || sonar_core::list_dir(&path, &options))
+            .await
+            .map_err(|e| CoreError::InvalidPath(format!("listing task failed: {e}")))??
+    };
+
+    // A newer navigation in this pane started while we were reading; don't
+    // touch the watcher or start counting for a folder nobody is looking at.
+    let current = counter.load(Ordering::SeqCst) == generation;
+    let watch_error = if current { ensure_watching(&app, &state, &pane, &listing.path).err() } else { None };
+
+    let pending: Vec<(String, PathBuf)> = listing
+        .entries
+        .iter()
+        .filter(|e| e.is_folder() && e.child_count.is_none())
+        .map(|e| (e.name.clone(), e.path.clone()))
+        .collect();
+    let counts_complete = pending.is_empty();
+    if current && !counts_complete {
+        let pane = pane.clone();
+        tauri::async_runtime::spawn_blocking(move || count_children(app, pane, counter, generation, pending));
+    }
+
+    let crumbs = breadcrumbs(&listing.path, dirs::home_dir().as_deref());
+    Ok(DirView { listing, crumbs, generation, counts_complete, watch_error: watch_error.map(|e| e.to_string()) })
+}
+
+/// Forget a closed pane: stops its watcher and any count job.
+#[tauri::command]
+pub fn close_pane(state: State<'_, ViewState>, pane: String) {
+    if let Some(slot) = state.panes().remove(&pane) {
+        slot.generation.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// Point the pane's watcher at `path`, reusing it if it's already there.
+fn ensure_watching(app: &AppHandle, state: &ViewState, pane: &str, path: &Path) -> Result<(), CoreError> {
+    let mut panes = state.panes();
+    let Some(slot) = panes.get_mut(pane) else { return Ok(()) }; // closed meanwhile
+    if slot.watcher.as_ref().is_some_and(|w| w.path() == path) {
+        return Ok(());
+    }
+    slot.watcher = None; // stop watching the old folder even if the new watch fails
+    let app = app.clone();
+    let changed = DirChanged { pane: pane.to_string(), path: path.to_path_buf() };
+    slot.watcher = Some(DirWatcher::new(path, sonar_core::watch::DEFAULT_DEBOUNCE, move || {
+        let _ = app.emit(EVENT_DIR_CHANGED, changed.clone());
+    })?);
+    Ok(())
+}
+
+/// Count items in each folder, emitting results in small batches so the UI
+/// fills in progressively. Stops early if the pane navigates elsewhere.
+fn count_children(
+    app: AppHandle,
+    pane: String,
+    current: Arc<AtomicU64>,
+    generation: u64,
+    folders: Vec<(String, PathBuf)>,
+) {
+    const FLUSH_EVERY: Duration = Duration::from_millis(100);
+    let mut batch = Vec::new();
+    let mut last_flush = Instant::now();
+    let emit = |counts, done| {
+        let _ = app.emit(EVENT_CHILD_COUNTS, ChildCounts { pane: pane.clone(), generation, counts, done });
+    };
+
+    for (name, path) in folders {
+        if current.load(Ordering::Relaxed) != generation {
+            return;
+        }
+        batch.push((name, sonar_core::child_count(&path)));
+        if last_flush.elapsed() >= FLUSH_EVERY {
+            emit(std::mem::take(&mut batch), false);
+            last_flush = Instant::now();
+        }
+    }
+    emit(batch, true);
+}
+
+/// Open a file (or macOS app bundle) with the system's default handler.
+#[tauri::command]
+pub async fn open_path(path: PathBuf) -> Result<(), CoreError> {
+    tauri::async_runtime::spawn_blocking(move || sonar_core::open_path(&path))
+        .await
+        .map_err(|e| CoreError::InvalidPath(format!("open task failed: {e}")))?
+}
+
+/// Resolve text typed into the editable location bar.
+#[tauri::command]
+pub fn resolve_path(input: String, cwd: PathBuf) -> Result<PathBuf, CoreError> {
+    sonar_core::resolve_user_path(&input, &cwd)
+}
+
+#[tauri::command]
+pub fn home_dir() -> Option<PathBuf> {
+    dirs::home_dir()
+}

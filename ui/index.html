@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sonar</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="toolbar">
+      <div class="nav-buttons">
+        <button id="btn-back" class="tool" disabled></button>
+        <button id="btn-forward" class="tool" disabled></button>
+        <button id="btn-up" class="tool"></button>
+      </div>
+
+      <nav id="location" class="location" aria-label="Location">
+        <ol id="crumbs" class="crumbs"></ol>
+        <input id="location-input" class="location-input" type="text" spellcheck="false" autocomplete="off" hidden />
+      </nav>
+
+      <div class="nav-buttons segmented" role="group" aria-label="View mode">
+        <button id="btn-view-icons" class="tool toggle" aria-pressed="false"></button>
+        <button id="btn-view-details" class="tool toggle" aria-pressed="true"></button>
+      </div>
+      <div class="nav-buttons">
+        <button id="btn-split" class="tool toggle" aria-pressed="false"></button>
+        <button id="btn-hidden" class="tool toggle" aria-pressed="false"></button>
+        <button id="btn-refresh" class="tool"></button>
+      </div>
+    </header>
+
+    <div id="tabbar" class="tabbar" role="tablist"></div>
+
+    <div class="body">
+      <aside id="sidebar" class="sidebar" aria-label="Places"></aside>
+      <div id="splitter" class="splitter" role="separator" aria-orientation="vertical"></div>
+      <main id="panes" class="panes"></main>
+    </div>
+
+    <section id="jobs" class="jobs" aria-label="Running operations" hidden></section>
+
+    <footer class="statusbar">
+      <span id="status-left"></span>
+      <span id="status-right"></span>
+    </footer>
+
+    <dialog id="dialog" class="dialog"></dialog>
+
+    <script type="module" src="js/main.js"></script>
+  </body>
+</html>

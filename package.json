@@ -1,0 +1,16 @@
+{
+  "name": "sonar",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "test:ui": "playwright test",
+    "test": "cargo test --workspace && playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0",
+    "@tauri-apps/cli": "^2"
+  }
+}

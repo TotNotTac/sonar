@@ -1,0 +1,6 @@
+/target
+/node_modules
+src-tauri/gen/schemas
+/test-results
+/playwright-report
+.DS_Store
