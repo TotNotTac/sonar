@@ -388,7 +388,7 @@ pub fn open_with(paths: &[PathBuf], app: &str) -> Result<()> {
         .ok_or_else(|| fail("application not found".into()))?;
     for cmd in crate::desktop::commands(&entry, &file, paths) {
         let Some((program, args)) = cmd.split_first() else { continue };
-        let child = std::process::Command::new(program)
+        let child = super::host_command(program)
             .args(args)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())

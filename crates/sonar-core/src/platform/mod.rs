@@ -136,11 +136,51 @@ pub(crate) fn special_folder(path: &Path) -> Option<&'static str> {
     }
 }
 
+/// A `Command` for a program of the host system, not of our bundle.
+///
+/// Inside an AppImage the runtime and its hooks point `LD_LIBRARY_PATH`,
+/// `PATH`, `XDG_DATA_DIRS`, `GSETTINGS_SCHEMA_DIR`, ... into the bundle. Apps
+/// we launch inherit that and load our older bundled libraries: Gwenview and
+/// Chromium then fail to start. So undo it for every child.
+#[allow(dead_code)] // unused on the generic backend
+pub(crate) fn host_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut cmd = Command::new(program);
+    let vars: Vec<(String, String)> = std::env::vars().collect();
+    for (key, value) in host_env(&vars) {
+        match value {
+            Some(v) => cmd.env(key, v),
+            None => cmd.env_remove(key),
+        };
+    }
+    cmd
+}
+
+/// The changes that turn our environment back into the host's: `None`
+/// removes a variable. Empty outside an AppImage (no `APPDIR`).
+#[allow(dead_code)]
+fn host_env(vars: &[(String, String)]) -> Vec<(String, Option<String>)> {
+    let appdir = vars.iter().find(|(k, _)| k == "APPDIR").map(|(_, v)| v.trim_end_matches('/'));
+    let Some(appdir) = appdir.filter(|d| d.starts_with('/') && d.len() > 1) else { return Vec::new() };
+    let inside = |p: &str| p == appdir || p.starts_with(&format!("{appdir}/"));
+    let mut out = Vec::new();
+    for (key, value) in vars {
+        // Set by the AppImage runtime / GTK hook (which forces Adwaita).
+        if matches!(key.as_str(), "APPDIR" | "APPIMAGE" | "ARGV0" | "OWD" | "GTK_THEME") {
+            out.push((key.clone(), None));
+        } else if value.contains(appdir) {
+            // Path lists get our dirs prepended; single paths are ours outright.
+            let kept: Vec<&str> = value.split(':').filter(|p| !p.is_empty() && !inside(p)).collect();
+            out.push((key.clone(), (!kept.is_empty()).then(|| kept.join(":"))));
+        }
+    }
+    out
+}
+
 /// Run a helper tool (`udisksctl`, `diskutil`, ...) and return its stdout,
 /// or a readable error built from its stderr.
 #[allow(dead_code)] // unused on the generic backend
 pub(crate) fn run_tool(program: &str, args: &[&str]) -> std::result::Result<String, String> {
-    let out = Command::new(program)
+    let out = host_command(program)
         .args(args)
         .stdin(Stdio::null())
         .output()
@@ -215,7 +255,7 @@ pub(crate) fn run_launcher(program: &str, path: &Path) -> Result<()> {
     if !path.exists() {
         return Err(CoreError::NotFound(path.to_path_buf()));
     }
-    let mut child = Command::new(program)
+    let mut child = host_command(program)
         .arg(path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -247,5 +287,51 @@ pub(crate) fn run_launcher(program: &str, path: &Path) -> Result<()> {
             }
             Err(e) => return Err(open_err(e.to_string())),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::host_env;
+
+    fn vars(list: &[(&str, &str)]) -> Vec<(String, String)> {
+        list.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn host_env_is_a_no_op_outside_an_appimage() {
+        assert!(host_env(&vars(&[("PATH", "/usr/bin"), ("GTK_THEME", "Breeze")])).is_empty());
+    }
+
+    #[test]
+    fn host_env_strips_the_bundle() {
+        let a = "/tmp/.mount_SonarX";
+        let env = vars(&[
+            ("APPDIR", a),
+            ("APPIMAGE", "/home/u/Sonar.AppImage"),
+            ("GTK_THEME", "Adwaita:light"),
+            ("HOME", "/home/u"),
+            ("PATH", "/tmp/.mount_SonarX/usr/bin/:/tmp/.mount_SonarX/bin/:/usr/local/bin:/usr/bin"),
+            ("LD_LIBRARY_PATH", "/tmp/.mount_SonarX/usr/lib/:/tmp/.mount_SonarX/lib64/:"),
+            ("XDG_DATA_DIRS", "/tmp/.mount_SonarX/usr/share:/usr/share:/usr/local/share"),
+            ("GSETTINGS_SCHEMA_DIR", "/tmp/.mount_SonarX//usr/share/glib-2.0/schemas"),
+            ("OTHER", "/tmp/.mount_SonarXY/keep"),
+        ]);
+        let mut got = host_env(&env);
+        got.sort();
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(
+            got,
+            vec![
+                ("APPDIR".into(), None),
+                ("APPIMAGE".into(), None),
+                ("GSETTINGS_SCHEMA_DIR".into(), None),
+                ("GTK_THEME".into(), None),
+                ("LD_LIBRARY_PATH".into(), None),
+                ("OTHER".into(), s("/tmp/.mount_SonarXY/keep")),
+                ("PATH".into(), s("/usr/local/bin:/usr/bin")),
+                ("XDG_DATA_DIRS".into(), s("/usr/share:/usr/local/share")),
+            ]
+        );
     }
 }
