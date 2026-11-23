@@ -7,6 +7,7 @@ import { isMenuOpen, showMenu } from "./menu.js";
 import { DragDrop } from "./dnd.js";
 import { Ops } from "./ops.js";
 import { Pane } from "./pane.js";
+import { showProperties } from "./properties.js";
 import { store } from "./store.js";
 import { Fmt } from "./format.js";
 import { basename, el, errMsg, invoke, isMac, isMod, listen, shortcut } from "./util.js";
@@ -107,6 +108,7 @@ export class App {
       split: () => this.toggleSplit(),
       filter: () => this.pane.showFilter(),
       search: () => this.pane.showSearch(),
+      properties: () => showProperties(this, this.pane),
       reload: () => this.pane.reload(),
       back: () => this.pane.goBack(),
       forward: () => this.pane.goForward(),
@@ -794,6 +796,9 @@ export class App {
     if (k === "F3") return run(() => this.toggleSplit());
     if (mod && !ev.shiftKey && ev.code === "Digit1") return run(() => this.setViewMode("icons"));
     if (mod && !ev.shiftKey && (ev.code === "Digit2" || ev.code === "Digit3")) return run(() => this.setViewMode("details"));
+    // Properties: ⌘I (Get Info) / Alt+Enter (Dolphin).
+    if ((isMac && ev.metaKey && !ev.altKey && lower === "i") || (!isMac && ev.altKey && k === "Enter"))
+      return run(() => showProperties(this, pane));
     // Search: ⌘F / Ctrl+F (Finder, Dolphin). Filter: Ctrl+I (Dolphin) / ⌥⌘F (⌘I is Get Info on macOS).
     if (mod && !ev.altKey && !ev.shiftKey && lower === "f") return run(() => pane.showSearch());
     if ((!isMac && ev.ctrlKey && lower === "i") || (isMac && ev.metaKey && ev.altKey && ev.code === "KeyF")) return run(() => pane.showFilter());

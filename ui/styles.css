@@ -705,3 +705,19 @@ body.native-menu #btn-menu { display: none; }
 .search-status { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .searchbar .tool { width: 26px; height: 26px; }
 td.location { direction: rtl; text-align: left; } /* ellipsize the start of long paths */
+
+/* ---------- Properties ---------- */
+
+.dialog.props { width: min(480px, calc(100vw - 32px)); }
+.props-head { display: flex; align-items: center; gap: 12px; }
+.props-head .dialog-title { overflow-wrap: anywhere; }
+.props-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 4px 0 0;
+}
+.props-grid dt { color: var(--text-dim); text-align: right; }
+.props-grid dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.props-grid dd.selectable { user-select: text; -webkit-user-select: text; }
+.props-grid dd.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }

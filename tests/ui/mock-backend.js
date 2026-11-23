@@ -482,6 +482,25 @@
       return generation;
     },
     cancel_search: ({ pane }) => { searchGens.set(pane, (searchGens.get(pane) ?? 0) + 1000); },
+    get_properties: ({ paths }) => paths.map((p) => {
+      const n = fs.get(p);
+      if (!n) throw notFound(p);
+      const e = entry(p, false);
+      return { name: nameOf(p) || "/", path: p, kind: n.kind === "dir" ? "folder" : "file", typeLabel: e.typeLabel,
+        size: n.kind === "file" ? n.size : null, sizeOnDisk: n.kind === "file" ? Math.ceil(n.size / 4096) * 4096 : null,
+        created: n.mtime - 86400000, modified: n.mtime, accessed: n.mtime, permissions: "rw-r--r--", mode: "644",
+        owner: "user", group: "staff", linkTarget: null };
+    }),
+    start_size: ({ token, paths }) => {
+      const files = paths.flatMap((p) => descendants(p)).filter((p) => fs.get(p)?.kind === "file");
+      const folders = paths.flatMap((p) => descendants(p)).filter((p) => fs.get(p)?.kind === "dir" && !paths.includes(p));
+      const bytes = files.reduce((t, p) => t + fs.get(p).size, 0);
+      const totals = (f) => ({ bytes: Math.round(bytes * f), bytesOnDisk: Math.round(bytes * f) + 4096, files: Math.round(files.length * f), folders: folders.length });
+      setTimeout(() => emit("size-progress", { token, totals: totals(0.5), done: false }), 10);
+      setTimeout(() => emit("size-progress", { token, totals: totals(1), done: true }), window.__mock.searchDelay * 2);
+      window.__mock.sizeJobs.push(token);
+    },
+    cancel_size: ({ token }) => { window.__mock.cancelledSizes.push(token); },
     has_native_menu: () => window.__mock.nativeMenu,
     take_open_requests: () => window.__mock.openRequests.splice(0),
     set_menu_state: ({ state }) => { window.__mock.menuState = state; },
@@ -504,6 +523,8 @@
     busy: new Set(),
     nativeMenu: false,
     searchDelay: 20,
+    sizeJobs: [],
+    cancelledSizes: [],
     /** Folders "the OS" asked to show at startup (Sonar as default file manager). */
     openRequests: [],
     /** Simulate a later request (Finder, `sonar <folder>` while running). */

@@ -16,6 +16,7 @@ pub fn run() {
         }))
         .manage(commands::ViewState::default())
         .manage(commands::SearchState::default())
+        .manage(commands::SizeJobs::default())
         .manage(open::OpenQueue::default())
         .manage(ops::OpsState::default())
         .register_asynchronous_uri_scheme_protocol(protocol::SCHEME, protocol::handle)
@@ -38,6 +39,9 @@ pub fn run() {
             commands::close_pane,
             commands::start_search,
             commands::cancel_search,
+            commands::get_properties,
+            commands::start_size,
+            commands::cancel_size,
             commands::mount_device,
             menu::has_native_menu,
             menu::set_menu_state,

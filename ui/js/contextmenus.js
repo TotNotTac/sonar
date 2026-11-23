@@ -15,6 +15,7 @@ const keys = {
   hidden: isMac ? shortcut("mod+shift+.") : "Ctrl+H",
   filter: isMac ? shortcut("mod+alt+F") : "Ctrl+I",
   search: shortcut("mod+F"),
+  properties: isMac ? shortcut("mod+I") : "Alt+Enter",
   icons: shortcut("mod+1"),
   details: isMac ? shortcut("mod+2") : "Ctrl+3",
   newTab: shortcut("mod+T"),
@@ -41,6 +42,8 @@ export function itemsMenu(app, pane, info = {}) {
       { label: `Extract to “${app.folderLabel(outside)}”`, action: () => ops.extractSelectionOut(pane) },
       { label: "Copy", shortcut: keys.copy, action: () => ops.setClipboard("copy", pane) },
       { label: "Copy Location", shortcut: keys.copyLocation, action: () => ops.copyLocation(pane) },
+      "-",
+      { label: "Properties", shortcut: keys.properties, action: () => app.runAction("properties") },
     ];
   }
   const archives = sel.every((e) => e.archive);
@@ -79,6 +82,8 @@ export function itemsMenu(app, pane, info = {}) {
       danger: true,
       action: () => ops.removeSelected({ permanent: true }, pane),
     },
+    "-",
+    { label: "Properties", shortcut: keys.properties, action: () => app.runAction("properties") },
   ];
 }
 
@@ -117,6 +122,8 @@ export function backgroundMenu(app, pane, { undoLabel = null, canPaste = false }
     { label: "Filter…", shortcut: keys.filter, action: () => pane.showFilter() },
     { label: "Open in New Tab", shortcut: keys.newTab, action: () => app.newTab(pane.path) },
     { label: split ? "Close Split View" : "Split View", shortcut: "F3", action: () => app.toggleSplit() },
+    "-",
+    { label: "Properties", shortcut: keys.properties, action: () => app.runAction("properties") },
   ];
 }
 

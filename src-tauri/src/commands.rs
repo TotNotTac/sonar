@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use sonar_core::{breadcrumbs, CoreError, Crumb, DirWatcher, ListOptions, Listing, Place, SortKey};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Emitted when the folder a pane shows changes on disk.
 pub const EVENT_DIR_CHANGED: &str = "dir-changed";
@@ -332,5 +332,51 @@ pub fn start_search(
 pub fn cancel_search(state: State<'_, SearchState>, pane: String) {
     if let Some((_, cancel)) = state.0.lock().unwrap_or_else(|p| p.into_inner()).get(&pane) {
         cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+// ---------- Properties ----------
+
+pub const EVENT_SIZE_PROGRESS: &str = "size-progress";
+
+/// Running size computations, by a token the frontend chooses.
+#[derive(Default)]
+pub struct SizeJobs(Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>);
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SizeProgress {
+    token: String,
+    totals: sonar_core::properties::SizeTotals,
+    done: bool,
+}
+
+#[tauri::command]
+pub async fn get_properties(paths: Vec<PathBuf>) -> Result<Vec<sonar_core::properties::Properties>, CoreError> {
+    tauri::async_runtime::spawn_blocking(move || paths.iter().map(|p| sonar_core::properties::properties(p)).collect())
+        .await
+        .map_err(|e| CoreError::Other(e.to_string()))?
+}
+
+/// Total size and item counts of `paths`, streamed as `size-progress` events.
+#[tauri::command]
+pub fn start_size(app: AppHandle, jobs: State<'_, SizeJobs>, token: String, paths: Vec<PathBuf>) {
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    jobs.0.lock().unwrap_or_else(|p| p.into_inner()).insert(token.clone(), cancel.clone());
+    std::thread::spawn(move || {
+        let emit = |totals, done| {
+            let _ = app.emit(EVENT_SIZE_PROGRESS, SizeProgress { token: token.clone(), totals, done });
+        };
+        if let Some(t) = sonar_core::properties::total_size(&paths, &cancel, &mut |t| emit(t, false)) {
+            emit(t, true);
+        }
+        app.state::<SizeJobs>().0.lock().unwrap_or_else(|p| p.into_inner()).remove(&token);
+    });
+}
+
+#[tauri::command]
+pub fn cancel_size(jobs: State<'_, SizeJobs>, token: String) {
+    if let Some(c) = jobs.0.lock().unwrap_or_else(|p| p.into_inner()).get(&token) {
+        c.store(true, Ordering::Relaxed);
     }
 }

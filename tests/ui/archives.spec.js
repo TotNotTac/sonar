@@ -40,7 +40,7 @@ test("nothing inside an archive can be changed", async ({ page }) => {
   expect(await mock(page, () => window.__mock.callsTo("trash_entries").length)).toBe(0);
 
   await item(pane, "photos").click({ button: "right" });
-  await expect(page.locator(".menu .menu-label")).toHaveText(["Open", "Extract to “Downloads”", "Copy", "Copy Location"]);
+  await expect(page.locator(".menu .menu-label")).toHaveText(["Open", "Extract to “Downloads”", "Copy", "Copy Location", "Properties"]);
 });
 
 test("copy items out of an archive", async ({ page }) => {

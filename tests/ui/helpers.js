@@ -11,6 +11,7 @@ export const keys = {
   forward: isMac ? "Meta+BracketRight" : "Alt+ArrowRight",
   filter: isMac ? "Meta+Alt+KeyF" : "Control+i",
   search: isMac ? "Meta+f" : "Control+f",
+  properties: isMac ? "Meta+i" : "Alt+Enter",
   icons: `${MOD}+1`,
   details: isMac ? "Meta+2" : "Control+3",
   hidden: isMac ? "Meta+Shift+Period" : "Control+h",

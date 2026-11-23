@@ -24,6 +24,7 @@ const FILE: &[Item] = &[
     ("new-folder", "New Folder", Some("CmdOrCtrl+Shift+N")),
     ("", "", None),
     ("open-location", "Go to Location…", Some("CmdOrCtrl+L")),
+    ("properties", "Get Info", Some("CmdOrCtrl+I")),
     ("", "", None),
     ("close-tab", "Close Tab", Some("CmdOrCtrl+W")),
     ("close-window", "Close Window", Some("CmdOrCtrl+Shift+W")),
