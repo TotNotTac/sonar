@@ -2,11 +2,31 @@
 
 A file manager inspired by KDE Dolphin, built with Tauri 2 and Rust. Targets macOS and Arch Linux.
 
-**Status:** browsing, live updates, opening files, and file operations (rename, new folder, trash, delete, copy/cut/paste with progress and conflict handling, undo), drag and drop (within Sonar and with other apps),
-the system clipboard, tabs, split view and rubber-band selection, OS file types and icons, image thumbnails,
-disk usage and mount/eject in the sidebar, a native menu bar on macOS, archives (browse, extract, compress,
-passwords, archives inside archives), fuzzy search, Properties, Open With, an editable Places sidebar, and Settings (startup, view defaults,
-thumbnails, confirmations).
+**Status: 0.1.0, early but usable for daily work.** Browsing, live updates, opening files, and file operations
+(rename, new folder, trash, delete, copy/cut/paste with progress and conflict handling, undo), drag and drop
+(within Sonar and with other apps), the system clipboard, tabs, split view and rubber-band selection, OS file
+types and icons, image thumbnails, disk usage and mount/eject in the sidebar, a native menu bar on macOS,
+archives (browse, extract, compress, passwords, archives inside archives), fuzzy search, Properties, Open With,
+an editable Places sidebar, and Settings (startup, view defaults, thumbnails, confirmations).
+
+Folders with 100,000 files stay fast, file names that aren't valid UTF-8 work like any other, and a network
+share that stops answering doesn't lock up the window.
+
+Not there yet: Dolphin's F4 terminal panel and a quick preview (Space). See the
+[v1 issue](https://github.com/samtoxie/sonar/issues/1) for what 1.0 should have.
+
+## Install
+
+Download the latest build from [Releases](https://github.com/samtoxie/sonar/releases):
+
+- **Arch Linux / other Linux:** the AppImage (or the `.deb` / `.rpm`). Sonar uses a few standard tools at
+  runtime; on Arch: `sudo pacman -S --needed shared-mime-info xdg-utils udisks2 libarchive` plus an icon
+  theme such as `breeze-icons` (all present on a usual KDE or GNOME install). If one is missing, the feature
+  that needs it says which package to install.
+- **macOS (Apple Silicon):** the `.dmg`. The build isn't signed: after copying Sonar to Applications, open it
+  once and allow it under System Settings → Privacy & Security.
+
+To make Sonar the default file manager, see [below](#making-sonar-your-default-file-manager).
 
 ## Layout
 
@@ -20,6 +40,8 @@ crates/sonar-core/      UI-agnostic filesystem model (no Tauri dependency)
   src/paths.rs          resolve typed locations (~, relative, file://)
   src/clipboard.rs      file-list formats: file:// URIs, uri-list, GNOME/KDE cut markers
   src/thumbnail.rs      image thumbnails, cached per the freedesktop thumbnail spec
+  src/mimeglob.rs       file name -> MIME type from shared-mime-info's globs, indexed (Linux)
+  src/uipath.rs         lossless paths for the UI: bytes that aren't UTF-8 survive the JSON boundary
   src/volumes.rs        parsing lsblk / udisksctl output (removable media on Linux)
   src/archive.rs        archives via bsdtar (libarchive): list, browse, extract, compress, passwords, nesting
   src/search.rs         recursive fuzzy search (fzf's algorithm via nucleo-matcher), streamed in batches
@@ -46,7 +68,7 @@ src-tauri/              Tauri shell: thin #[tauri::command] wrappers over sonar-
 ui/                     static frontend, native ES modules (no bundler)
   js/app.js             window: tabs, split view, toolbar, location bar, sidebar, keyboard routing
   js/pane.js            one folder view: navigation, history, selection, filter, live updates
-  js/views.js           details and icons renderers
+  js/views.js           details and icons renderers; only the rows near the viewport are in the DOM
   js/ops.js             file operations, jobs panel, conflict dialog, undo
   js/menu.js            HTML context menus (+ contextmenus.js for their contents)
   js/dnd.js             drag and drop: in-window, out to other apps, and drops from them
@@ -62,7 +84,7 @@ ui/                     static frontend, native ES modules (no bundler)
 - Rust (stable) and Node.js
 - **macOS:** Xcode Command Line Tools
 - **Arch Linux:** `sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl appmenu-gtk-module libappindicator-gtk3 librsvg`
-  (runtime: `shared-mime-info`, an icon theme such as `breeze-icons`, and `udisks2` for mounting; all standard on KDE/GNOME)
+  (runtime: see [Install](#install))
 
 ## Running
 
@@ -175,21 +197,34 @@ panel; name clashes ask Skip / Keep Both / Replace (or Merge for folders), optio
 On macOS the menu bar's Go menu also has Finder's shortcuts (⌘⇧H Home, ⌘⇧D Desktop, ⌘⇧O Documents,
 ⌘⌥L Downloads); on Linux the same actions are in the toolbar's ☰ menu.
 
-Tabs (and their split views) are restored on the next launch. Drag tabs to reorder them, double-click empty
-tab-bar space for a new tab, and middle-click a tab to close it. Closing the last tab closes the window.
+Tabs (and their split views) are restored on the next launch, and so are the window's size and position
+(Settings can open Home or a chosen folder instead). Drag tabs to reorder them, double-click empty tab-bar
+space for a new tab, and middle-click a tab to close it. Closing the last tab closes the window. In split view,
+each side's header has a × to close that side.
 Middle-click a folder, place or breadcrumb to open it in a background tab. Right-click items, empty space,
-places, breadcrumbs or tabs for context menus. View mode and sort order are remembered per folder; hidden-file
-visibility is global.
+places, breadcrumbs or tabs for context menus. View mode and sort order are remembered per folder (or shared
+by all folders, in Settings); hidden-file visibility is global.
 
 Type a few letters to jump to a matching entry. Mouse back/forward buttons also work.
 
 ### Search, Properties, Open With, Places
 
 - **Search** matches names fuzzily, like fzf (`rep2025` finds `report-2025.pdf`; `docs/rep` matches the
-  path), best matches first, streaming in while it searches. `*` and `?` switch to glob matching. Results
-  show their folder; Enter/double-click opens, and "Open Containing Folder" jumps there.
+  path), best matches first, streaming in while it searches; case never matters. `*` and `?` switch to glob
+  matching. Results show their folder; Enter/double-click opens, and "Open Containing Folder" jumps there.
+  Network shares and system folders below the search folder are skipped (search inside one to include it).
 - **Properties** shows type, size (folders are counted live), dates, owner, permissions and link targets.
 - **Open With** (context menu) lists the apps registered for the file type; "Other Application…" opens a chooser
   that can also make the choice the default for that type.
 - **Places**: drag folders onto the sidebar or use "Add to Places"; right-click a place to rename, hide or
   remove it; drag places to reorder. "Show Hidden Places" and "Reset Places" are on the sidebar's menu.
+
+## Settings
+
+Configure Sonar (☰ menu, Ctrl+Shift+,; on macOS Sonar → Settings…, ⌘,) sets what opens at startup, the
+default view and sort order, whether views are remembered per folder, hidden files, image thumbnails, and
+which actions ask for confirmation. Changes apply immediately.
+
+## License
+
+Sonar is licensed under the [European Union Public Licence v. 1.2](LICENSE) (EUPL-1.2).

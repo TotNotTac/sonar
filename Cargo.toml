@@ -5,7 +5,7 @@ members = ["crates/sonar-core", "src-tauri"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "EUPL-1.2"
 
 [workspace.dependencies]
 sonar-core = { path = "crates/sonar-core" }
