@@ -792,3 +792,22 @@ td.location { direction: rtl; text-align: left; } /* ellipsize the start of long
 .settings-folder .text-input { flex: 1; min-width: 0; }
 .settings-folder .text-input:disabled, .settings-folder .btn:disabled { opacity: 0.5; }
 .settings-reset { margin-right: auto; }
+
+/* ---------- File chooser (picker mode) ---------- */
+
+.picker-mode #tabbar { display: none; }
+.picker-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--window);
+}
+.picker-name { display: flex; flex: 1 1 280px; align-items: center; gap: 8px; }
+.picker-name[hidden] { display: none; }
+.picker-name .text-input { flex: 1; min-width: 0; }
+.picker-choices { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.picker-choice { display: flex; align-items: center; gap: 6px; }
+.picker-spacer { flex: 1; }

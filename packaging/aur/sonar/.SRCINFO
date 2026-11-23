@@ -15,6 +15,7 @@ pkgbase = sonar
 	depends = libarchive
 	optdepends = udisks2: mount and eject removable drives from the sidebar
 	optdepends = breeze-icons: file and folder icons (or another icon theme)
+	optdepends = xdg-desktop-portal: let other apps use Sonar as their file chooser
 	conflicts = sonar-bin
 	conflicts = sonar-git
 	source = sonar-0.1.0.tar.gz::https://github.com/samtoxie/sonar/archive/refs/tags/v0.1.0.tar.gz

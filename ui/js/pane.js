@@ -6,13 +6,15 @@ import { saveViewProps, settings, viewPropsFor } from "./store.js";
 import { childNameOnPath, el, errMsg, invoke, isMac, isMod, plural, shown } from "./util.js";
 import { VIEWS } from "./views.js";
 import { obtainPassword } from "./password.js";
+import { pickerId } from "./picker.js";
 
 let nextId = 1;
 
 export class Pane {
   constructor(app) {
     this.app = app;
-    this.id = `pane-${nextId++}`;
+    // Unique across windows: backend state and events are keyed by pane id.
+    this.id = `${pickerId ? `picker${pickerId}-` : ""}pane-${nextId++}`;
     this.path = null;
     this.view = null;        // last DirView from the backend
     this.items = [];         // entries currently shown (after the filter)
@@ -360,6 +362,8 @@ export class Pane {
   async openEntry(i) {
     const e = this.items[i];
     if (!e) return;
+    // A file chooser chooses files (archives too) instead of opening them.
+    if (this.app.picker && !this.isFolder(e)) return this.app.picker.choose(e);
     // Archives open like folders (read-only); "Open With" is in the context menu.
     if (this.isFolder(e) || e.archive) return this.navigate(e.path);
     if (e.kind === "brokenSymlink") return this.showMessage(`"${e.name}" is a broken link`);
@@ -379,6 +383,7 @@ export class Pane {
 
   /** Enter: open the folder under the cursor, or every selected file. */
   openSelection() {
+    if (this.app.picker) return this.app.picker.accept();
     const sel = [...this.selected].sort((a, b) => a - b);
     if (sel.length <= 1) return this.openEntry(sel[0] ?? this.focus);
     const files = sel.filter((i) => !this.isFolder(this.items[i]));
@@ -555,7 +560,9 @@ export class Pane {
 
   computeItems() {
     const f = this.filter.toLowerCase();
-    const entries = this.view?.entries ?? [];
+    const picker = this.app.picker;
+    let entries = this.view?.entries ?? [];
+    if (picker) entries = entries.filter((e) => picker.shows(this, e)); // its file type filter
     this.items = f ? entries.filter((e) => e.name.toLowerCase().includes(f)) : entries;
     this.byName = new Map(this.items.map((e, i) => [e.name, i]));
   }
@@ -754,6 +761,7 @@ export class Pane {
       case "Backspace": return ev.metaKey || ev.ctrlKey || ev.altKey ? false : run(() => this.goUp());
       case "Escape":
         if (!this.filterBar.hidden) return run(() => this.hideFilter());
+        if (this.app.picker && !this.selected.size) return run(() => this.app.picker.cancel());
         return run(() => this.clearSelection());
     }
     if (isMod(ev) && ev.key.toLowerCase() === "a") return run(() => this.selectAll());

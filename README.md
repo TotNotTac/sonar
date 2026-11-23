@@ -7,7 +7,9 @@ A file manager inspired by KDE Dolphin, built with Tauri 2 and Rust. Targets mac
 (within Sonar and with other apps), the system clipboard, tabs, split view and rubber-band selection, OS file
 types and icons, image thumbnails, disk usage and mount/eject in the sidebar, a native menu bar on macOS,
 archives (browse, extract, compress, passwords, archives inside archives), fuzzy search, Properties, Open With,
-an editable Places sidebar, and Settings (startup, view defaults, thumbnails, confirmations).
+an editable Places sidebar, and Settings (startup, view defaults, thumbnails, confirmations). On Linux, it
+can also act as the file chooser for other apps via the XDG Desktop Portal (see
+[below](#using-sonar-as-the-file-chooser-linux)).
 
 Folders with 100,000 files stay fast, file names that aren't valid UTF-8 work like any other, and a network
 share that stops answering doesn't lock up the window.
@@ -32,7 +34,8 @@ Install `udisks2` too if you want to mount drives from the sidebar.
 - **Linux:** the AppImage (or the `.deb` / `.rpm`). Sonar uses a few standard tools at runtime
   (`shared-mime-info`, `xdg-utils`, `udisks2`, `libarchive` and an icon theme such as `breeze-icons`; all
   present on a usual KDE or GNOME install). If one is missing, the feature that needs it says which package to
-  install.
+  install. The `.deb`, `.rpm` and AUR packages also register Sonar as a file chooser backend for the
+  XDG Desktop Portal — see [below](#using-sonar-as-the-file-chooser-linux).
 - **macOS (Apple Silicon):** the `.dmg`. The build isn't signed: after copying Sonar to Applications, open it
   once and allow it under System Settings → Privacy & Security.
 
@@ -75,6 +78,8 @@ src-tauri/              Tauri shell: thin #[tauri::command] wrappers over sonar-
   src/native/           UI-thread platform code: system clipboard (NSPasteboard / GTK), drag-out
   src/protocol.rs       sonar:// scheme serving OS icons and thumbnails to the webview
   src/menu.rs           native macOS menu bar (Linux gets Dolphin's ☰ menu in the toolbar)
+  src/picker.rs         file-chooser requests from the XDG portal: picker window, pending requests
+  src/portal.rs         the portal itself: org.freedesktop.impl.portal.FileChooser over D-Bus (Linux)
 ui/                     static frontend, native ES modules (no bundler)
   js/app.js             window: tabs, split view, toolbar, location bar, sidebar, keyboard routing
   js/pane.js            one folder view: navigation, history, selection, filter, live updates
@@ -87,6 +92,7 @@ ui/                     static frontend, native ES modules (no bundler)
   js/settings.js        Configure Sonar dialog
   js/openwith.js        Open With: app chooser, "always use" for a file type
   js/password.js        password prompt for encrypted archives
+  js/picker.js          the file-chooser mode of a window (opened via the portal; ?picker=<id>)
 ```
 
 ## Prerequisites
@@ -122,6 +128,40 @@ inside Finder windows still open in Finder. Undo with `duti -s com.apple.finder 
 create `~/.local/share/applications/sonar.desktop` from `src-tauri/linux/sonar.desktop` with
 `Exec=/path/to/Sonar.AppImage %U`. Then pick Sonar under System Settings → Default Applications → File Manager,
 or run `xdg-mime default sonar.desktop inode/directory` (with the `.deb`/`.rpm`: `Sonar.desktop`).
+
+## Using Sonar as the file chooser (Linux)
+
+Apps that use the [XDG Desktop Portal](https://flatpak.github.io/xdg-desktop-portal/) for file dialogs —
+Firefox, Chromium, Flatpak apps, most GTK/Qt apps — can open Sonar for "Open File" / "Save As" instead of
+the GTK or KDE dialog. The `.deb`, `.rpm` and AUR packages install the portal registration
+(`org.freedesktop.impl.portal.FileChooser`); it does nothing until you opt in.
+
+Enable it in `~/.config/xdg-desktop-portal/portals.conf` (create the file if it doesn't exist):
+
+```ini
+[preferred]
+org.freedesktop.impl.portal.FileChooser=sonar
+```
+
+then restart the portal service and the apps:
+
+```sh
+systemctl --user restart xdg-desktop-portal
+```
+
+(On GNOME/KDE the desktop's own `*-portals.conf` may list this interface explicitly; the user file above
+takes precedence — if yours doesn't do it, create `gnome-portals.conf`/`kde-portals.conf` with the same
+content instead.)
+
+From then on, the app's file dialog is a normal Sonar window: navigate, type a name, pick filters, tick
+the options the app offers, and hit its "Open"/"Save" button. Cancel (or Escape, or closing the window)
+cancels the dialog. Sonar starts on demand via D-Bus when an app asks for a file and quits by itself a
+few minutes after the last chooser closes; no need to keep it running.
+
+- The AppImage can't register itself system-wide; use the `.deb`, `.rpm` or an AUR package instead
+  (or copy the two files from `src-tauri/linux/` into `/usr/share/xdg-desktop-portal/portals/` and
+  `/usr/share/dbus-1/services/`).
+- Remove the line (or the file) and restart the portal to go back to the default chooser.
 
 ## Tests
 

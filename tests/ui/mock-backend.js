@@ -109,6 +109,8 @@
   const TYPES = { png: ["PNG image", "image"], pdf: ["PDF document", "document"], txt: ["TXT text", "text"],
     md: ["MD text", "text"], rs: ["RS source code", "code"], zip: ["ZIP archive", "archive"], iso: ["ISO disk image", "archive"] };
 
+  const MIME = { png: "image/png", pdf: "application/pdf", txt: "text/plain", md: "text/markdown" };
+
   function entry(p, countChildren) {
     const n = fs.get(p);
     const name = nameOf(p);
@@ -119,7 +121,7 @@
       name, path: p, kind: dir ? "directory" : "file", isSymlink: false, isHidden: name.startsWith("."),
       readonly: false, size: dir ? null : n.size, childCount: dir && countChildren ? children(p).length : null,
       modified: n.mtime, typeLabel, icon,
-      typeId: dir ? "inode/directory" : `mock/${ext || "unknown"}`,
+      typeId: dir ? "inode/directory" : MIME[ext] ?? `mock/${ext || "unknown"}`,
       iconKey: dir ? "folder" : `${icon}-x-generic,unknown`,
       thumbnail: ext === "png",
       archive: ARCHIVE_RE.test(name),
@@ -494,6 +496,9 @@
       return c?.paths ? structuredClone(c) : null;
     },
     clipboard_write_text: ({ text }) => { window.__mock.clipboard = { text }; },
+    // File chooser windows (picker mode): the request, set by a test, and the answers.
+    picker_request: ({ id }) => (window.__mock.pickerRequest?.id === id ? window.__mock.pickerRequest : null),
+    picker_respond: ({ id, answer }) => { window.__mock.pickerAnswers.push({ id, ...answer }); },
     clipboard_clear_cut: () => {
       if (window.__mock.clipboard?.mode === "cut") window.__mock.clipboard = null;
     },
@@ -567,6 +572,8 @@
   window.__mock = {
     HOME, TRASH, fs, calls, emit, watching, undoStack, mkdir, write, touched,
     denied: new Set(),
+    pickerRequest: null,
+    pickerAnswers: [],
     slow: new Map(), // path -> ms before open_dir answers (Infinity: never)
     clipboard: null,
     opened: [],

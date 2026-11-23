@@ -69,7 +69,7 @@ fn deliver(app: &AppHandle, requests: Vec<OpenRequest>) {
     let queue = app.state::<OpenQueue>();
     let mut q = queue.0.lock().unwrap_or_else(|p| p.into_inner());
     if q.0 {
-        let _ = app.emit(EVENT_OPEN_PATHS, &requests);
+        let _ = app.emit_to("main", EVENT_OPEN_PATHS, &requests);
     } else {
         q.1.extend(requests);
     }
@@ -79,6 +79,12 @@ fn deliver(app: &AppHandle, requests: Vec<OpenRequest>) {
         let _ = window.show();
         let _ = window.set_focus();
     }
+}
+
+/// The main window closed (Sonar may keep running for file choosers): queue
+/// requests again until a new one is ready.
+pub fn main_window_closed(app: &AppHandle) {
+    app.state::<OpenQueue>().0.lock().unwrap_or_else(|p| p.into_inner()).0 = false;
 }
 
 /// Called once by the frontend when it's ready: returns queued requests, and

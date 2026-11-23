@@ -7,6 +7,7 @@ import { isMenuOpen, showMenu } from "./menu.js";
 import { DragDrop } from "./dnd.js";
 import { Ops } from "./ops.js";
 import { Pane } from "./pane.js";
+import { Picker, pickerId } from "./picker.js";
 import { showProperties } from "./properties.js";
 import { showSettings } from "./settings.js";
 import { placePrefs, savePlacePrefs, settings, store } from "./store.js";
@@ -35,6 +36,8 @@ export class App {
       tabbar: $("tabbar"), panes: $("panes"), sidebar: $("sidebar"), splitter: $("splitter"),
       statusLeft: $("status-left"), statusRight: $("status-right"),
     };
+    // A file chooser for another app (see picker.js), or the normal window.
+    this.picker = pickerId ? new Picker(this, pickerId) : null;
     this.ops = new Ops(this);
     this.dnd = new DragDrop(this);
     this.actions = this.buildActions();
@@ -64,6 +67,7 @@ export class App {
     this.home = (await invoke("home_dir")) ?? "/";
     this.nativeMenu = await invoke("has_native_menu").catch(() => false);
     document.body.classList.toggle("native-menu", this.nativeMenu);
+    if (this.picker) return this.picker.start(); // no session, no folders from the OS
     // Folders the OS asked us to show (Sonar as the default file manager):
     // listen first, then collect what arrived before we were ready.
     listen("open-paths", ({ payload }) => this.openRequested(payload));
@@ -238,6 +242,11 @@ export class App {
   }
 
   newTab(path, { activate = true } = {}) {
+    // A picker keeps one tab (its tab bar is hidden): go there instead.
+    if (this.picker && this.tabs.length) {
+      this.pane.navigate(path);
+      return this.activeTab;
+    }
     const tab = this.addTab([path]);
     if (activate) this.activateTab(tab);
     else {
@@ -290,6 +299,7 @@ export class App {
   }
 
   closeWindow() {
+    if (this.picker) return this.picker.cancel(); // its window closes when answered
     this.saveSession();
     window.__TAURI__.window.getCurrentWindow().close().catch((err) => this.pane?.showMessage(errMsg(err)));
   }
@@ -389,6 +399,7 @@ export class App {
   // ---------- Session ----------
 
   saveSession() {
+    if (this.picker) return; // the main window's tabs, not a file chooser's
     if (!this.tabs.length) return;
     store.set("session", {
       tabs: this.tabs.map((t) => ({ paths: t.panes.map((p) => p.path ?? p.initialPath), active: t.active })),
@@ -471,6 +482,7 @@ export class App {
     if (pane !== this.pane) return;
     if (statusOnly) this.updateStatus();
     else this.updateChrome();
+    this.picker?.update();
   }
 
   // ---------- Chrome ----------
@@ -492,7 +504,7 @@ export class App {
     for (const b of e.sidebar.querySelectorAll(".place")) b.classList.toggle("active", b.dataset.path === pane.path);
     this.updateStatus();
     this.syncMenu();
-    document.title = pane.path ? shown(`${pane.title()} — Sonar`) : "Sonar";
+    if (!this.picker) document.title = pane.path ? shown(`${pane.title()} — Sonar`) : "Sonar";
   }
 
   updateStatus() {

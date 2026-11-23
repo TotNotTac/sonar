@@ -24,8 +24,10 @@ export const keys = {
 export const HOME = "/home/user";
 
 /** Load the app against the fake backend. `session` pre-seeds saved tabs. */
-export async function openApp(page, { session } = {}) {
+export async function openApp(page, { session, picker, url = picker ? `/index.html?picker=${picker.id}` : "/index.html" } = {}) {
   await page.addInitScript({ path: "tests/ui/mock-backend.js" });
+  // A file chooser request for picker mode (see picker.spec.js).
+  if (picker) await page.addInitScript((r) => { window.__mock.pickerRequest = r; }, picker);
   if (session) {
     await page.addInitScript((s) => {
       if (!sessionStorage.getItem("seeded")) {
@@ -34,7 +36,7 @@ export async function openApp(page, { session } = {}) {
       }
     }, session);
   }
-  await page.goto("/index.html");
+  await page.goto(url);
   await page.waitForFunction(() => window.sonar?.pane?.view);
 }
 

@@ -11,6 +11,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "Sonar",
         "width": 1100,
         "height": 700,
@@ -34,7 +35,19 @@
       "icons/icon.png"
     ],
     "linux": {
-      "deb": { "depends": [] }
+      "deb": {
+        "depends": [],
+        "files": {
+          "/usr/share/xdg-desktop-portal/portals/org.freedesktop.impl.portal.desktop.sonar.portal": "linux/org.freedesktop.impl.portal.desktop.sonar.portal",
+          "/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.sonar.service": "linux/org.freedesktop.impl.portal.desktop.sonar.service"
+        }
+      },
+      "rpm": {
+        "files": {
+          "/usr/share/xdg-desktop-portal/portals/org.freedesktop.impl.portal.desktop.sonar.portal": "linux/org.freedesktop.impl.portal.desktop.sonar.portal",
+          "/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.sonar.service": "linux/org.freedesktop.impl.portal.desktop.sonar.service"
+        }
+      }
     }
   }
 }

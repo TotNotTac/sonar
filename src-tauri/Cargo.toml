@@ -21,6 +21,7 @@ dirs.workspace = true
 drag = "2.1.1"
 tauri-plugin-single-instance = "2.5.5"
 tauri-plugin-window-state = "2.5.0"
+tokio = { version = "1", features = ["sync", "macros"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
@@ -29,7 +30,11 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+zbus = "5.19"
 
 [dev-dependencies]
 muda = { version = "0.20", default-features = false } # accelerator parsing only; no libxdo
 tempfile = "3"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+zbus = { version = "5.19", features = ["p2p"] } # private connections for the portal test

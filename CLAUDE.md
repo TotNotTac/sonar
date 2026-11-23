@@ -25,7 +25,12 @@ the layout, features and shortcuts.
 
 - `crates/sonar-core`: all filesystem logic, no Tauri dependency, unit-tested. OS differences live behind
   `src/platform/` (macos.rs / linux.rs / generic.rs).
-- `src-tauri`: thin `#[tauri::command]` wrappers, events, menu, native clipboard/drag.
+- `src-tauri`: thin `#[tauri::command]` wrappers, events, menu, native clipboard/drag. Also the XDG
+  Desktop Portal file chooser (`portal.rs`, Linux only): `sonar --portal` serves
+  `org.freedesktop.impl.portal.FileChooser` over D-Bus; requests open picker windows (`picker.rs`,
+  `ui/js/picker.js`). The `.portal`/`.service` files live in `src-tauri/linux/` and are installed by the
+  `.deb`/`.rpm` (`bundle.linux.*.files`) and the AUR packages — not by the AppImage (can't register
+  system-wide). Users opt in via `~/.config/xdg-desktop-portal/portals.conf`.
 - `ui/`: vanilla ES modules, no bundler. Backend errors are `{ code, message }` (see `error.rs`).
 - Archives go through the `bsdtar` CLI. Always pass `--passphrase` when reading, or bsdtar can hang
   waiting for a password.
@@ -45,6 +50,7 @@ the layout, features and shortcuts.
 ## Roadmap
 
 Done: browsing, file operations + undo, drag and drop, clipboard, tabs/split, thumbnails, volumes, archives
-(including passwords and nesting), search, Properties, Open With, editable Places, default file manager on macOS.
+(including passwords and nesting), search, Properties, Open With, editable Places, default file manager on macOS,
+and (Linux) the XDG portal file chooser for other apps' Open/Save dialogs.
 
 Next: an integrated terminal panel (Dolphin's F4). It was postponed and hasn't been started.
