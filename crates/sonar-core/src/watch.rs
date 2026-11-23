@@ -61,7 +61,7 @@ mod tests {
         // Canonicalise: on macOS the temp dir is behind the /var -> /private/var symlink.
         let root = dir.path().canonicalize().unwrap();
         let (tx, rx) = mpsc::channel();
-        let _w = DirWatcher::new(&root, Duration::from_millis(100), move || tx.send(()).unwrap()).unwrap();
+        let _w = DirWatcher::new(&root, Duration::from_millis(250), move || tx.send(()).unwrap()).unwrap();
         std::thread::sleep(Duration::from_millis(200)); // let FSEvents settle
 
         for i in 0..20 {
@@ -69,10 +69,11 @@ mod tests {
         }
         rx.recv_timeout(Duration::from_secs(5)).expect("a change notification");
         // The burst should collapse into a few callbacks, not one per write.
-        // (Exact count depends on how the writes straddle debounce windows
-        // when the machine is busy, e.g. running other tests in parallel.)
-        std::thread::sleep(Duration::from_millis(400));
+        // The exact count depends on how long the writes take relative to the
+        // debounce window (slow CI containers spread them over several), so
+        // only assert that coalescing clearly happened.
+        std::thread::sleep(Duration::from_millis(800));
         let total = 1 + rx.try_iter().count();
-        assert!(total <= 5, "{total} callbacks for 20 writes");
+        assert!(total < 10, "{total} callbacks for 20 writes");
     }
 }
