@@ -19,18 +19,20 @@ const PORTAL_ARG: &str = "--portal";
 pub fn run() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let portal_only = args.iter().any(|a| a == PORTAL_ARG);
-    tauri::Builder::default()
-        // Must be first: a second `sonar <folder>` hands its arguments to the
-        // running instance and exits.
-        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
-            if argv.iter().any(|a| a == PORTAL_ARG) {
-                return; // this instance serves the portal already
-            }
+    // The portal service is started by D-Bus; it must not hand its arguments
+    // to a running main instance and exit, or the chooser never appears.
+    // Portal instances bypass the single-instance lock (and lose the bus-name
+    // race gracefully if a main instance already serves the portal).
+    let mut builder = tauri::Builder::default();
+    if !portal_only {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             show_main_window(app);
             open::handle(app, sonar_core::paths::paths_from_args(argv.get(1..).unwrap_or_default(), cwd.as_ref()));
-        }))
-        // Window size, position and maximized state, saved on close and
-        // restored at start (the main window's; pickers open centred).
+        }));
+    }
+    // Window size, position and maximized state, saved on close and
+    // restored at start (the main window's; pickers open centred).
+    builder
         .plugin(tauri_plugin_window_state::Builder::default().with_filter(|label| label == "main").build())
         .manage(commands::ViewState::default())
         .manage(commands::SearchState::default())
@@ -57,7 +59,7 @@ pub fn run() {
                 reveal_macos::install(app.handle());
             }
             #[cfg(target_os = "linux")]
-            portal::start(app.handle());
+            portal::start(app.handle(), portal_only);
             if !portal_only {
                 show_main_window(app.handle());
                 // `sonar ~/Downloads` (and desktop launchers' `Exec=sonar %U`).

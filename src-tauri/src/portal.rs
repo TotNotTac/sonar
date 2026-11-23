@@ -251,7 +251,7 @@ struct Connection(#[allow(dead_code)] zbus::Connection);
 
 /// Serve the portal for this app, and end a Sonar that only serves it once it
 /// has no windows and has been idle for a while.
-pub fn start(app: &tauri::AppHandle) {
+pub fn start(app: &tauri::AppHandle, portal_only: bool) {
     use tauri::Manager;
     let usage = app.state::<crate::picker::Usage>().shared();
     let chooser = FileChooser::new(Arc::new(crate::picker::TauriPicker(app.clone())), usage);
@@ -261,7 +261,14 @@ pub fn start(app: &tauri::AppHandle) {
             Ok(conn) => {
                 handle.manage(Connection(conn));
             }
-            Err(e) => eprintln!("Sonar: file chooser portal unavailable: {e}"),
+            Err(e) => {
+                eprintln!("Sonar: file chooser portal unavailable: {e}");
+                // A windowless portal instance has nothing to do but wait for the
+                // name; if the main instance owns it, exit instead of idling.
+                if portal_only {
+                    handle.exit(2);
+                }
+            }
         }
     });
     let handle = app.clone();
