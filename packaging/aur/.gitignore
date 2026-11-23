@@ -1,0 +1,4 @@
+# Only the package recipes; makepkg downloads and builds land elsewhere.
+*/*
+!*/PKGBUILD
+!*/.SRCINFO

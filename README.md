@@ -225,6 +225,17 @@ Configure Sonar (☰ menu, Ctrl+Shift+,; on macOS Sonar → Settings…, ⌘,) s
 default view and sort order, whether views are remembered per folder, hidden files, image thumbnails, and
 which actions ask for confirmation. Changes apply immediately.
 
+## Releasing
+
+1. Tag the commit (`git tag -a v0.2.0 -m "Sonar 0.2.0" && git push origin v0.2.0`). The Build workflow
+   attaches the AppImage, `.deb`, `.rpm` and `.dmg` to a draft release.
+2. Publish the release. The AUR workflow then updates `sonar` and `sonar-bin` on the AUR (new version and
+   checksums) and commits the PKGBUILDs in `packaging/aur/` back to main. `sonar-git` needs nothing.
+   If it fails, fix the cause and run it again from the Actions tab (with the tag as input).
+
+The AUR workflow needs the repository secret `AUR_SSH_KEY`: a private key, used only for this, whose public
+key is in the AUR account.
+
 ## License
 
 Sonar is licensed under the [European Union Public Licence v. 1.2](LICENSE) (EUPL-1.2).
